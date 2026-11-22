@@ -1,0 +1,9 @@
+{
+  "name": "ai-with-ante",
+  "owner": {
+    "name": "Ante Matos",
+    "url": "https://www.antematos.com"
+  },
+  "description": "Small Claude Code add-ons from AI with Ante",
+  "plugins": []
+}
