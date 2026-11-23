@@ -41,7 +41,7 @@ Nothing shows in a brand-new chat until Claude has replied once.
 
 Press **Hold** beside the bar. A row opens above the prompt: hold for 1 h, 4 h or 8 h (15, 30 or 45 minutes if your cache lasts 5 minutes). Press the × to close the row without choosing.
 
-While a chat is held, the button reads **Held**, the bar is full and green, and the time shows when the hold ends, for example `to 4:30 pm`. Press **Held** to stop.
+While a chat is held, the button reads **Held** and the time in green shows when the hold ends, for example `to 4:30 pm`. Press **Held** to stop.
 
 How it works: shortly before the chat would go cold, Cache Clock sends Claude one tiny background question. That reads the cached chat and starts its clock again. If a ping ever finds the cache already gone, the hold stops and tells you, so it never keeps paying full price.
 
@@ -70,7 +70,7 @@ A panel opens beside the chat. It lists every chat on this computer that runs Ca
 | (bar) | How much time is left |
 | Name | The chat's name |
 | Size | How big the chat is, in tokens (for example `410k`) |
-| Time | Time left, `held to 4:30 pm`, `cold`, or the Claude Code character while that chat is working |
+| Time | Time left, the hold's end time (for example `4:30 pm`) when held, `cold`, or the Claude Code character while that chat is working |
 | Hold | Tick to hold that chat for 8 hours (45 minutes on a 5-minute cache); untick to stop |
 
 A cold chat stays in the list, greyed, for a day and then drops off.

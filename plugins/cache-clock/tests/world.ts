@@ -60,6 +60,7 @@ export function makeWorld(on: On, start: Record<string, unknown> = {}): World {
   on('store.keys', () => ({ value: [...w.store.keys()] }))
   on('session.id', () => ({ value: w.id }))
   on('session.cwd', () => ({ value: w.cwd }))
+  on('session.root', () => ({ value: w.cwd.split('/').slice(0, 3).join('/') }))
   on('command.register', (_, e) => ({ value: { command: e.name } }))
   on('ui.toast', (_, e) => {
     w.toasts.push(e.text)

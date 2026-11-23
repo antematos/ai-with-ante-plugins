@@ -194,7 +194,7 @@ async function noteRequest($: $, mem: Memory, startedAt: number, used: Usage | n
   const chat: CacheClockChat = {
     id,
     name: mem.names[id] ?? before?.name ?? UNTITLED,
-    project: projectOf(await $.session.cwd()),
+    project: projectOf(await $.session.root()),
     size: sizeOf(used),
     lastAt: startedAt,
     lifeMs,
@@ -355,9 +355,6 @@ export const register: Register = on => {
           <Button key="held" onPress={() => setHold($, mem, me.id, null)}>
             Held
           </Button>
-          <Text>
-            <Text color={COLOR.green}>{'▬'.repeat(5)}</Text>
-          </Text>
           <Text color={COLOR.green}>to {timeOfDay(holdUntil)}</Text>
           {tail}
         </Box>
@@ -409,7 +406,7 @@ export const register: Register = on => {
         ))}
         <Box flexGrow={1} />
         <Button key="close" role="dismiss" onPress={close}>
-          Close
+          ×
         </Button>
       </Box>
     )
@@ -419,7 +416,7 @@ export const register: Register = on => {
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const snap = await read($, snapAtom)
     const { Box, Button, Text } = $.ui.resolve(e)
-    const isNarrow = e.props.bodyColumns < 60
+    const isNarrow = e.props.bodyColumns < 46
     const barCols = isNarrow ? 4 : 8
     const barPx = isNarrow ? 30 : 56
     const groups = snap === null ? [] : orderChats(snap.chats, snap.holds, snap.now)
@@ -433,20 +430,20 @@ export const register: Register = on => {
       hold: RenderChildren,
       key: string,
     ) => (
-      <Box key={key} flexDirection="row" gap={2} alignItems="center" paddingY="xs">
+      <Box key={key} flexDirection="row" gap={1} alignItems="center" paddingY="xs">
         <Box width={barCols} flexShrink={0}>
           {bar}
         </Box>
-        <Box flexGrow={1} flexShrink={1} minWidth={8} overflow="hidden">
+        <Box flexGrow={1} flexShrink={1} minWidth={6} overflow="hidden">
           {name}
         </Box>
-        <Box width={6} flexShrink={0} justifyContent="flex-end">
+        <Box width={5} flexShrink={0} justifyContent="flex-end">
           {size}
         </Box>
-        <Box width={16} flexShrink={0} justifyContent="flex-end">
+        <Box width={8} flexShrink={0} justifyContent="flex-end">
           {time}
         </Box>
-        <Box width={5} flexShrink={0} justifyContent="flex-end">
+        <Box width={4} flexShrink={0} justifyContent="flex-end">
           {hold}
         </Box>
       </Box>
@@ -463,11 +460,12 @@ export const register: Register = on => {
       if (Svg === undefined) return null
       const fill = Math.round(Math.max(0, Math.min(1, share)) * barPx)
       const source =
-        `<svg xmlns="http://www.w3.org/2000/svg" width="${barPx}" height="6" viewBox="0 0 ${barPx} 6">` +
-        `<rect width="${barPx}" height="6" rx="3" fill="${COLOR.paneTrack}"/>` +
-        (fill > 0 ? `<rect width="${fill}" height="6" rx="3" fill="${color}"/>` : '') +
+        `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${barPx} 8">` +
+        `<rect y="1" width="${barPx}" height="6" rx="3" fill="${COLOR.paneTrack}"/>` +
+        (fill > 0 ? `<rect y="1" width="${fill}" height="6" rx="3" fill="${color}"/>` : '') +
         '</svg>'
-      return <Svg source={source} alt="" width={barPx} height={6} />
+      const alt = `${Math.round(Math.max(0, Math.min(1, share)) * 100)}% of the cache time left`
+      return <Svg source={source} alt={alt} width={barPx} height={8} isInteractive />
     }
 
     const row = (r: ChatRow) => {
@@ -514,7 +512,7 @@ export const register: Register = on => {
         name,
         size,
         isHeld ? (
-          <Text color={COLOR.green}>held to {timeOfDay(r.holdUntil ?? 0)}</Text>
+          <Text color={COLOR.green}>{timeOfDay(r.holdUntil ?? 0)}</Text>
         ) : (
           <Text color={colorOf(phase)} tabular>
             {clockText(r.leftMs)}
@@ -539,9 +537,10 @@ export const register: Register = on => {
           <Box key={`project:${group.project}`} flexDirection="column">
             {i > 0 && Svg !== undefined && (
               <Svg
-                source={`<svg xmlns="http://www.w3.org/2000/svg" width="4000" height="1" viewBox="0 0 4000 1" preserveAspectRatio="none"><rect width="4000" height="1" fill="${COLOR.hairline}"/></svg>`}
-                alt=""
+                source={`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 4000 1" preserveAspectRatio="none"><rect width="4000" height="1" fill="${COLOR.hairline}"/></svg>`}
+                alt="Divider"
                 height={1}
+                isInteractive
               />
             )}
             <Box paddingTop="sm">

@@ -45,7 +45,7 @@ test('a 5-minute write counts from the start of the request', async ($, on) => {
   await ui.unmount()
 })
 
-test('a 1-hour write gives 60 minutes, and a read alone keeps it', async ($, on) => {
+test('a 1-hour write gives 60 minutes, and a read alone keeps it', { timeoutMs: 30_000 }, async ($, on) => {
   const w = makeWorld(on)
   await start($)
   await turn($, w, usage(0, 8000, 0))

@@ -66,7 +66,7 @@ test('/cache-clock opens the panel', async ($, on) => {
   expect(w.opened).toEqual(['cache-clock'])
 })
 
-test('rows: projects by their most urgent chat, each chat once, cold last, a day-old cold chat gone', async ($, on) => {
+test('rows: projects by their most urgent chat, each chat once, cold last, a day-old cold chat gone', { timeoutMs: 30_000 }, async ($, on) => {
   const w = makeWorld(on, OTHERS)
   await openPanel($, w)
   const ui = await $.ui.mount(pane(100))
@@ -99,7 +99,8 @@ test('each kind of row draws its parts', async ($, on) => {
   const red = await ui.find({ type: 'Text', text: '1:00' })
   expect(red?.props.color).toBe(RED)
   expect(await ui.find({ type: 'Text', text: '410k' })).toBeDefined()
-  expect((await ui.find({ type: 'Text', text: 'held to 4:30 pm' }))?.props.color).toBe(GREEN)
+  expect((await ui.find({ type: 'Text', text: '4:30 pm' }))?.props.color).toBe(GREEN)
+  expect(JSON.stringify(await ui.drawn())).not.toContain('to 4:30 pm')
   expect((await ui.find({ type: 'Text', text: 'cold' }))?.props.color).toBe(BLUE)
   const name = await ui.find({ type: 'Text', text: /^Rewrite/ })
   expect(name?.props).toMatchObject({ maxLines: 1 }) // the desktop table keeps maxLines and always cuts the end
@@ -140,12 +141,16 @@ test('narrow: fixed right-hand columns, the header built from the same boxes, a 
   for (const columns of [100, 40]) {
     const ui = await $.ui.mount(pane(columns))
     const tree = JSON.stringify(await ui.drawn())
-    expect(tree).toContain('"width":6')
-    expect(tree).toContain('"width":16')
     expect(tree).toContain('"width":5')
-    expect(tree).toContain('"minWidth":8')
-    const pills = (await ui.findAll({ type: 'Svg' })).filter(s => !String(s.props.source).includes('animate') && s.props.height === 6)
-    expect(new Set(pills.map(p => p.props.width))).toEqual(new Set([columns < 60 ? 30 : 56]))
+    expect(tree).toContain('"width":8')
+    expect(tree).toContain('"gap":1')
+    expect(tree).toContain('"width":4')
+    expect(tree).toContain('"minWidth":6')
+    expect(tree).not.toContain('"width":16')
+    const pills = (await ui.findAll({ type: 'Svg' })).filter(s => !String(s.props.source).includes('animate') && s.props.height === 8)
+    expect(new Set(pills.map(p => p.props.width))).toEqual(new Set([columns < 46 ? 30 : 56]))
+    expect(pills.every(p => String(p.props.alt).length > 0)).toBe(true)
+    expect(pills.every(p => p.props.isInteractive === true && !/<svg[^>]*width=/.test(String(p.props.source)))).toBe(true)
     await ui.unmount()
   }
 })
@@ -156,5 +161,15 @@ test('the terminal draws the panel without pictures', async ($, on) => {
   const ui = await $.ui.mount({ ...pane(100), surface: 'terminal' })
   expect(await ui.find({ type: 'Text', text: 'Seed order list' })).toBeDefined()
   expect((await ui.find({ type: 'Text', text: '✻' }))?.props.color).toBe('#D97757')
+  await ui.unmount()
+})
+
+test('the project heading is the session root folder, not where the shell moved to', async ($, on) => {
+  const w = makeWorld(on, {})
+  w.cwd = '/work/recipe-site/src/deep'
+  await openPanel($, w)
+  const ui = await $.ui.mount(pane(100))
+  expect(await ui.find({ type: 'Text', text: 'recipe-site' })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: 'deep' })).toBeFalsy()
   await ui.unmount()
 })

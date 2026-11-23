@@ -48,7 +48,7 @@ test('Hold opens a row of lengths for a 1-hour cache; pressing Hold again closes
   for (const surface of ['desktop', 'terminal'] as const) {
     const ui = await $.ui.mount({ ...BAND, surface })
     expect((await ui.find({ type: 'Text', text: 'Hold for' }))).toBeDefined()
-    expect((await ui.findAll({ type: 'Button' })).map(b => b.text)).toEqual(['1 h', '4 h', '8 h', 'Close'])
+    expect((await ui.findAll({ type: 'Button' })).map(b => b.text)).toEqual(['1 h', '4 h', '8 h', '×'])
     expect((await ui.find({ type: 'Button', key: 'close' }))?.props.role).toBe('dismiss')
     expect(await ui.find({ type: 'Button', text: 'Cancel' })).toBeUndefined()
     await ui.unmount()
@@ -62,10 +62,10 @@ test('a 5-minute cache offers 15, 30 and 45 minutes', async ($, on) => {
   await start($)
   await turn($, w, usage(5000, 0, 0))
   await pressHold($)
-  expect(await bandButtons($)).toEqual(['15 min', '30 min', '45 min', 'Close'])
+  expect(await bandButtons($)).toEqual(['15 min', '30 min', '45 min', '×'])
 })
 
-test('picking a length holds the chat: Held chip, full green bar, end time', async ($, on) => {
+test('picking a length holds the chat: Held chip and end time, no bar', async ($, on) => {
   const w = makeWorld(on)
   await start($)
   await turn($, w, usage(0, 8000, 0))
@@ -80,7 +80,7 @@ test('picking a length holds the chat: Held chip, full green bar, end time', asy
   expect((await ui.find({ type: 'Button' }))?.key).toBe('held')
   expect(await ui.find({ type: 'Text', text: 'to 3:00 pm' })).toMatchObject({ props: { color: GREEN } })
   const cells = await ui.findAll({ type: 'Text', text: /^▬+$/ })
-  expect(cells.filter(c => c.props.color !== undefined).map(c => [c.props.color, c.text])).toEqual([[GREEN, '▬▬▬▬▬']])
+  expect(cells).toEqual([])
   await ui.press({ key: 'held' })
   await ui.unmount()
   expect(w.store.has('hold:chat-a')).toBe(false)
