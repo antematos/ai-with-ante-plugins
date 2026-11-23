@@ -169,3 +169,22 @@ test('a ping keeps the cache lifetime of the chat', SLOW, async ($, on) => {
   expect(w.forks).toHaveLength(1)
   expect((w.store.get('chat:chat-a') as { lifeMs: number }).lifeMs).toBe(HOUR)
 })
+
+test('a slow ping that reaches the cache keeps the hold', SLOW, async ($, on) => {
+  const w = makeWorld(on)
+  w.forkUsage = usage(0, 0, 9000)
+  w.isForkHeld = true // the reply comes back only after the old five minutes are up
+  await start($)
+  await turn($, w, usage(5000, 0, 0))
+  await keepWarm($)
+  await w.clock.advance(4 * MIN + 40_000) // ping goes out with about 20 s left
+  expect(w.forks).toHaveLength(1)
+  await w.clock.advance(30_000) // the reply is still out, past the old expiry
+  expect(w.store.has('hold:chat-a')).toBe(true)
+  expect(w.toasts).toEqual([])
+  w.releaseFork() // the reply arrives and reached the cache
+  await w.clock.advance(2_000)
+  expect(w.store.has('hold:chat-a')).toBe(true)
+  expect(w.toasts).toEqual([])
+  expect((w.store.get('chat:chat-a') as { lastAt: number }).lastAt).toBeGreaterThan(0)
+})

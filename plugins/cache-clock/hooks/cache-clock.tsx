@@ -147,7 +147,9 @@ async function tick($: $, mem: Memory): Promise<void> {
   const holdUntil = snap.holds[me.id]
   if (holdUntil !== undefined) {
     // A held chat is kept warm even while a long turn waits on a tool.
-    if (left <= 0) {
+    if (mem.isPinging) {
+      // A keep-warm reply is still out: wait for it before judging the chat cold.
+    } else if (left <= 0) {
       await setHold($, mem, me.id, null)
       $.ui.toast("This chat's cache went cold before it could be kept warm, so the hold has stopped.")
     } else if (left <= pingLeadFor(me.lifeMs) && !mem.isPinging) {
