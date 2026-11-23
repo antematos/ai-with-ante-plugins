@@ -68,12 +68,14 @@ A panel opens beside the chat. It lists every chat on this computer that runs Ca
 | Column | Shows |
 |---|---|
 | (bar) | How much time is left |
-| Name | The chat's name |
+| Name | The chat's name. In the desktop app, click it to go to that chat |
 | Size | How big the chat is, in tokens (for example `410k`) |
 | Time | Time left, the hold's end time (for example `4:30 pm`) when held, `cold`, or the Claude Code character while that chat is working |
 | Hold | Tick to hold that chat for 8 hours (45 minutes on a 5-minute cache); untick to stop |
 
 A cold chat stays in the list, greyed, for a day and then drops off.
+
+A chat's name becomes clickable once that chat has replied at least once with Cache Clock 0.2.0 or later. If a chat can't be opened, a small note tells you to find it in the sidebar by its name.
 
 ## What it costs
 
@@ -96,7 +98,7 @@ Prices checked 23 Nov 2026 on [Anthropic's pricing page](https://platform.claude
 - Windows: supported.
 - macOS: untested so far.
 
-The bar beside the model name shows in the desktop app. The panel works in the desktop app and the terminal.
+The bar beside the model name shows in the desktop app. The panel works in the desktop app and the terminal. Clicking a name to go to a chat works in the desktop app only.
 
 ## Credit
 

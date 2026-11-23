@@ -24,6 +24,14 @@ export type World = {
   id: string
   cwd: string
   opened: string[]
+  /** The process environment the plugin reads. */
+  env: Record<string, string>
+  /** The machine the session runs on. */
+  platform: 'macos' | 'windows' | 'linux'
+  /** Every command the plugin ran, by its argument vector. */
+  ran: string[][]
+  /** The exit code the next command gives; null makes it fail to start. */
+  exitCode: number | null
 }
 
 export function usage(write5m: number, write1h: number, read: number, input = 1000): TurnUsage {
@@ -52,7 +60,20 @@ export function makeWorld(on: On, start: Record<string, unknown> = {}): World {
     id: 'chat-a',
     cwd: '/work/garden-notes',
     opened: [],
+    env: {},
+    platform: 'windows',
+    ran: [],
+    exitCode: 0,
   }
+  on('env.get', (_, e) => ({ value: w.env[e.name] }))
+  on('session.info', () => ({ value: { transcriptPath: '/t.jsonl', platform: w.platform } }))
+  on('process.run', (_, e) => {
+    w.ran.push([...e.argv])
+    if (w.exitCode === null) throw new Error('cannot start')
+    return {
+      value: { exitCode: w.exitCode, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false },
+    }
+  })
   on('store.get', (_, e) => ({ value: w.store.get(e.key) }))
   on('store.set', (_, e) => {
     w.store.set(e.key, JSON.parse(JSON.stringify(e.value)))

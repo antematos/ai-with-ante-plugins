@@ -32,6 +32,8 @@ const CHAT = 'chat:'
 const HOLD = 'hold:'
 const PANE = 'cache-clock'
 const UNTITLED = 'Untitled chat'
+/** The shape of the desktop app's chat IDs; nothing else is ever opened. */
+const APP_ID = /^local_[A-Za-z0-9-]{1,64}$/
 
 /** The keep-warm ping: a tiny question over the chat as last sent, read from the cache. */
 const PING =
@@ -72,6 +74,40 @@ function isChat(value: unknown): value is CacheClockChat {
     typeof v.lifeMs === 'number' &&
     typeof v.isRunning === 'boolean'
   )
+}
+
+/** The desktop app's ID for this chat, when the session runs in the app. */
+async function appIdOf($: $): Promise<string | undefined> {
+  const value = await $.env.get('CLAUDE_CODE_HOST_SESSION_ID')
+  return isAppId(value) ? value : undefined
+}
+
+function isAppId(value: unknown): value is string {
+  return typeof value === 'string' && APP_ID.test(value)
+}
+
+/**
+ * Asks the computer to open chat `appId` in the desktop app, as an outside link
+ * would; says where to find the chat when that fails.
+ */
+async function openChat($: $, appId: string, name: string): Promise<void> {
+  const link = `claude://claude.ai/epitaxy/${appId}`
+  const { platform } = await $.session.info()
+  const argv =
+    platform === 'macos'
+      ? ['open', link]
+      : platform === 'windows'
+        ? ['rundll32', 'url.dll,FileProtocolHandler', link]
+        : null
+  let isOpened = false
+  if (argv !== null) {
+    try {
+      isOpened = (await $.process.run(argv, { timeoutMs: 10_000 })).exitCode === 0
+    } catch {
+      isOpened = false
+    }
+  }
+  if (!isOpened) $.ui.toast(`Couldn’t open “${name}”. Find it in the sidebar.`)
 }
 
 function untilOf(value: unknown): number | undefined {
@@ -200,6 +236,7 @@ async function noteRequest($: $, mem: Memory, startedAt: number, used: Usage | n
   const before = await readChat($, id)
   const lifeMs = lifetimeOf(used, before?.lifeMs)
   if (lifeMs === undefined) return
+  const appId = await appIdOf($)
   const chat: CacheClockChat = {
     id,
     name: mem.names[id] ?? before?.name ?? UNTITLED,
@@ -208,6 +245,7 @@ async function noteRequest($: $, mem: Memory, startedAt: number, used: Usage | n
     lastAt: startedAt,
     lifeMs,
     isRunning: await read($, runningAtom),
+    ...(appId === undefined ? {} : { appId }),
   }
   await $.store.set(CHAT + id, chat)
   await refresh($, mem)
@@ -480,11 +518,20 @@ export const register: Register = on => {
     const row = (r: ChatRow) => {
       const { chat } = r
       const isCold = r.kind === 'cold'
-      const name = (
+      const label = (
         <Text wrap="truncate" maxLines={1} color={isCold ? COLOR.quiet : undefined}>
           {chat.name}
         </Text>
       )
+      const appId = chat.appId
+      const name =
+        e.surface === 'desktop' && isAppId(appId) ? (
+          <Button key={`open:${chat.id}`} plain onPress={() => openChat($, appId, chat.name)}>
+            {label}
+          </Button>
+        ) : (
+          label
+        )
       const size = (
         <Text color={COLOR.quiet} tabular>
           {sizeText(chat.size)}
