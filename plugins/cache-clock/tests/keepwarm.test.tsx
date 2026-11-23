@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 import { HOUR, MIN, T0, makeWorld, usage } from './world'
-import { start, turn } from './turns'
+import { beginTurn, endTurn, start, turn } from './turns'
 
 const SLOW = { timeoutMs: 30_000 }
 
@@ -130,4 +130,42 @@ test('one toast per warm period when the chat turns red', SLOW, async ($, on) =>
   await turn($, w, usage(0, 0, 9000))
   await w.clock.advance(4 * MIN + 1000)
   expect(w.toasts).toHaveLength(2)
+})
+
+test('a held chat is still pinged while a long turn waits on a tool', SLOW, async ($, on) => {
+  const w = makeWorld(on)
+  w.forkUsage = usage(0, 0, 9000)
+  await start($)
+  await turn($, w, usage(5000, 0, 0))
+  await keepWarm($)
+  const id = await beginTurn($, w, usage(0, 0, 6000)) // one request, then a long tool wait
+  await w.clock.advance(4 * MIN + 40_000)
+  expect(w.forks).toHaveLength(1)
+  expect(w.store.has('hold:chat-a')).toBe(true)
+  await endTurn($, id)
+})
+
+test('a hold found already cold stops and says so, and is never pinged', SLOW, async ($, on) => {
+  const w = makeWorld(on)
+  w.forkUsage = usage(0, 0, 9000)
+  await start($)
+  await turn($, w, usage(5000, 0, 0))
+  await keepWarm($)
+  const chat = w.store.get('chat:chat-a') as { lastAt: number }
+  w.store.set('chat:chat-a', { ...chat, lastAt: chat.lastAt - 10 * MIN }) // the machine slept
+  await w.clock.advance(2_000)
+  expect(w.forks).toEqual([])
+  expect(w.store.has('hold:chat-a')).toBe(false)
+  expect(w.toasts.join(' ')).toMatch(/went cold.*hold has stopped/)
+})
+
+test('a ping keeps the cache lifetime of the chat', SLOW, async ($, on) => {
+  const w = makeWorld(on)
+  w.forkUsage = usage(50, 0, 90_000) // the ping's own reply is written to a 5-minute cache
+  await start($)
+  await turn($, w, usage(0, 5000, 0)) // a 1-hour chat
+  await keepWarm($)
+  await w.clock.advance(59 * MIN)
+  expect(w.forks).toHaveLength(1)
+  expect((w.store.get('chat:chat-a') as { lifeMs: number }).lifeMs).toBe(HOUR)
 })

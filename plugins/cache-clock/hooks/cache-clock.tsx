@@ -142,13 +142,20 @@ async function refresh($: $, mem: Memory): Promise<CacheClockSnapshot> {
 async function tick($: $, mem: Memory): Promise<void> {
   const snap = await refresh($, mem)
   const me = snap.me
-  if (me === null || (await read($, runningAtom))) return
+  if (me === null) return
   const left = me.lastAt + me.lifeMs - snap.now
   const holdUntil = snap.holds[me.id]
   if (holdUntil !== undefined) {
-    if (left > 0 && left <= pingLeadFor(me.lifeMs) && !mem.isPinging) await ping($, mem, me)
+    // A held chat is kept warm even while a long turn waits on a tool.
+    if (left <= 0) {
+      await setHold($, mem, me.id, null)
+      $.ui.toast("This chat's cache went cold before it could be kept warm, so the hold has stopped.")
+    } else if (left <= pingLeadFor(me.lifeMs) && !mem.isPinging) {
+      await ping($, mem, me)
+    }
     return
   }
+  if (await read($, runningAtom)) return
   if (phaseOf(left, me.lifeMs) === 'red' && mem.warnedAt !== me.lastAt) {
     mem.warnedAt = me.lastAt
     $.ui.toast(`This chat's cache goes cold in ${clockText(left)}. Reply or press Hold to keep it warm.`)
@@ -175,8 +182,8 @@ async function ping($: $, mem: Memory, chat: CacheClockChat): Promise<void> {
     }
     const latest = (await readChat($, chat.id)) ?? chat
     if (latest.lastAt > startedAt) return
-    const lifeMs = lifetimeOf(used, latest.lifeMs) ?? latest.lifeMs
-    await $.store.set(CHAT + chat.id, { ...latest, lastAt: startedAt, lifeMs })
+    // A ping refreshes the chat's own cache: its lifetime stays as the chat's requests set it.
+    await $.store.set(CHAT + chat.id, { ...latest, lastAt: startedAt })
   } finally {
     mem.isPinging = false
     await refresh($, mem)
