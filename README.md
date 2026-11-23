@@ -22,7 +22,9 @@ Restart Claude Code after installing.
 
 ## What's here
 
-Nothing yet. The first add-on, Cache Clock, is being rebuilt and will be listed here when it's ready.
+| Add-on | What it does | Install name |
+|---|---|---|
+| [Cache Clock](plugins/cache-clock/README.md) | Shows how long each chat stays warm, beside the model name and in a side panel, and can hold a chat warm. | `cache-clock` |
 
 ## Updates
 
