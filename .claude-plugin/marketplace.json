@@ -5,5 +5,12 @@
     "url": "https://www.antematos.com"
   },
   "description": "Small Claude Code add-ons from AI with Ante",
-  "plugins": []
+  "plugins": [
+    {
+      "name": "cache-clock",
+      "source": "./plugins/cache-clock",
+      "description": "See how long each chat's prompt cache stays warm, and hold a chat warm.",
+      "version": "0.1.0"
+    }
+  ]
 }
