@@ -75,7 +75,7 @@ A panel opens beside the chat. It lists every chat on this computer that runs Ca
 
 A cold chat stays in the list, greyed, for a day and then drops off.
 
-A chat's name becomes clickable once that chat has replied at least once with Cache Clock 0.2.0 or later. If a chat can't be opened, a small note tells you to find it in the sidebar by its name.
+A chat's name becomes clickable once that chat has replied at least once with Cache Clock 0.2.0 or later. If a click doesn't take you to the chat, find it in the sidebar by its name.
 
 ## What it costs
 

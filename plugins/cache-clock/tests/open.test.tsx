@@ -53,6 +53,20 @@ test('a chat in the desktop app saves its app chat ID on its record', async ($, 
   expect(w.store.get('chat:chat-a')).toMatchObject({ appId: APP_ID })
 })
 
+test('a run started from inside a desktop chat does not take that chat’s app ID', async ($, on) => {
+  // A background or terminal run inherits the desktop chat's environment.
+  const w = makeWorld(on)
+  w.env.CLAUDE_CODE_HOST_SESSION_ID = APP_ID
+  await start($)
+  for (const surfaces of [[], ['terminal']] as const) {
+    w.surfaces = [...surfaces]
+    w.id = `run-${surfaces.length}`
+    await turn($, w, usage(0, 0, 400_000))
+    expect(w.store.get(`chat:${w.id}`)).toBeDefined()
+    expect(w.store.get(`chat:${w.id}`)).not.toHaveProperty('appId')
+  }
+})
+
 test('on Windows, clicking a chat name opens that chat in the app', async ($, on) => {
   const w = makeWorld(on, seed({ appId: APP_ID }))
   await openPanel($, w)
@@ -91,6 +105,11 @@ test('when a chat cannot be opened, a note says to find it in the sidebar', asyn
   const ranBefore = w.ran.length
   await ui.press({ key: 'open:seed' })
   expect(w.toasts).toEqual([NOTE, NOTE, NOTE])
+  expect(w.ran).toHaveLength(ranBefore)
+
+  w.platform = null // the machine cannot be told: nothing is run
+  await ui.press({ key: 'open:seed' })
+  expect(w.toasts).toEqual([NOTE, NOTE, NOTE, NOTE])
   expect(w.ran).toHaveLength(ranBefore)
   await ui.unmount()
 })

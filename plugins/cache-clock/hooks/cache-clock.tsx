@@ -76,8 +76,13 @@ function isChat(value: unknown): value is CacheClockChat {
   )
 }
 
-/** The desktop app's ID for this chat, when the session runs in the app. */
+/**
+ * The desktop app's ID for this chat, when the session draws in the app. A
+ * terminal or background run started from inside a desktop chat inherits that
+ * chat's environment, so the variable alone does not make the ID its own.
+ */
 async function appIdOf($: $): Promise<string | undefined> {
+  if (!(await $.session.surfaces()).includes('desktop')) return undefined
   const value = await $.env.get('CLAUDE_CODE_HOST_SESSION_ID')
   return isAppId(value) ? value : undefined
 }
@@ -92,20 +97,20 @@ function isAppId(value: unknown): value is string {
  */
 async function openChat($: $, appId: string, name: string): Promise<void> {
   const link = `claude://claude.ai/epitaxy/${appId}`
-  const { platform } = await $.session.info()
-  const argv =
-    platform === 'macos'
-      ? ['open', link]
-      : platform === 'windows'
-        ? ['rundll32', 'url.dll,FileProtocolHandler', link]
-        : null
   let isOpened = false
-  if (argv !== null) {
-    try {
+  try {
+    const { platform } = await $.session.info()
+    const argv =
+      platform === 'macos'
+        ? ['open', link]
+        : platform === 'windows'
+          ? ['rundll32', 'url.dll,FileProtocolHandler', link]
+          : null
+    if (argv !== null) {
       isOpened = (await $.process.run(argv, { timeoutMs: 10_000 })).exitCode === 0
-    } catch {
-      isOpened = false
     }
+  } catch {
+    isOpened = false
   }
   if (!isOpened) $.ui.toast(`Couldn’t open “${name}”. Find it in the sidebar.`)
 }

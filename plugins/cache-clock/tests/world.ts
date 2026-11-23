@@ -26,8 +26,10 @@ export type World = {
   opened: string[]
   /** The process environment the plugin reads. */
   env: Record<string, string>
-  /** The machine the session runs on. */
-  platform: 'macos' | 'windows' | 'linux'
+  /** The machine the session runs on; null makes the lookup fail. */
+  platform: 'macos' | 'windows' | 'linux' | null
+  /** Where the session draws: the desktop app, a terminal, or nowhere (a background run). */
+  surfaces: ('desktop' | 'terminal')[]
   /** Every command the plugin ran, by its argument vector. */
   ran: string[][]
   /** The exit code the next command gives; null makes it fail to start. */
@@ -62,11 +64,16 @@ export function makeWorld(on: On, start: Record<string, unknown> = {}): World {
     opened: [],
     env: {},
     platform: 'windows',
+    surfaces: ['desktop'],
     ran: [],
     exitCode: 0,
   }
   on('env.get', (_, e) => ({ value: w.env[e.name] }))
-  on('session.info', () => ({ value: { transcriptPath: '/t.jsonl', platform: w.platform } }))
+  on('session.surfaces', () => ({ value: [...w.surfaces] }))
+  on('session.info', () => {
+    if (w.platform === null) throw new Error('no session info')
+    return { value: { transcriptPath: '/t.jsonl', platform: w.platform } }
+  })
   on('process.run', (_, e) => {
     w.ran.push([...e.argv])
     if (w.exitCode === null) throw new Error('cannot start')
