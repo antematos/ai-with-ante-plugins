@@ -53,19 +53,55 @@ test('a chat in the desktop app saves its app chat ID on its record', async ($, 
   expect(w.store.get('chat:chat-a')).toMatchObject({ appId: APP_ID })
 })
 
-test('a run started from inside a desktop chat does not take that chat’s app ID', async ($, on) => {
-  // A background or terminal run inherits the desktop chat's environment.
+test('a desktop chat keeps its app ID while the app is showing another chat', async ($, on) => {
+  // The app leaves a chat's surfaces while that chat is off screen; it keeps working.
   const w = makeWorld(on)
   w.env.CLAUDE_CODE_HOST_SESSION_ID = APP_ID
   await start($)
-  for (const surfaces of [[], ['terminal']] as const) {
-    w.surfaces = [...surfaces]
-    w.id = `run-${surfaces.length}`
-    await turn($, w, usage(0, 0, 400_000))
-    expect(w.store.get(`chat:${w.id}`)).toBeDefined()
-    expect(w.store.get(`chat:${w.id}`)).not.toHaveProperty('appId')
-  }
+  await turn($, w, usage(0, 0, 400_000))
+  w.surfaces = []
+  await turn($, w, usage(0, 0, 400_000))
+  expect(w.store.get('chat:chat-a')).toMatchObject({ appId: APP_ID })
 })
+
+test('a chat working before the app draws it keeps the app ID it saved earlier', async ($, on) => {
+  // Its record holds its own app ID from an earlier run of the same chat.
+  const w = makeWorld(on, {
+    'chat:chat-a': { ...seed({ appId: APP_ID })['chat:seed'], id: 'chat-a' },
+  })
+  w.surfaces = []
+  await start($)
+  await turn($, w, usage(0, 0, 400_000))
+  expect(w.store.get('chat:chat-a')).toMatchObject({ appId: APP_ID, lastAt: T0 })
+})
+
+test('an open chat with no new reply saves its app ID once the app draws it', async ($, on) => {
+  // Its record is from before the app ID was saved; the chat has gone cold.
+  const w = makeWorld(on, {
+    'chat:chat-a': { ...seed({})['chat:seed'], id: 'chat-a', lastAt: T0 - 3 * HOUR },
+  })
+  w.env.CLAUDE_CODE_HOST_SESSION_ID = APP_ID
+  w.surfaces = []
+  await start($)
+  expect(w.store.get('chat:chat-a')).not.toHaveProperty('appId')
+  // The roster may not list the app yet while the attach is announced.
+  await $.session.attach({ surface: 'desktop', clientId: 'desktop:default' })
+  expect(w.store.get('chat:chat-a')).toMatchObject({ appId: APP_ID, lastAt: T0 - 3 * HOUR })
+})
+
+for (const surfaces of [[], ['terminal']] as const) {
+  test(`a run started from inside a desktop chat does not take that chat’s app ID (${surfaces.join() || 'no surface'})`, async ($, on) => {
+    // A background or terminal run inherits the desktop chat's environment but is never drawn in the app.
+    const w = makeWorld(on)
+    w.env.CLAUDE_CODE_HOST_SESSION_ID = APP_ID
+    w.surfaces = [...surfaces]
+    w.id = 'run'
+    await start($)
+    await turn($, w, usage(0, 0, 400_000))
+    expect(w.store.get('chat:run')).toBeDefined()
+    expect(w.store.get('chat:run')).not.toHaveProperty('appId')
+  })
+}
 
 test('on Windows, clicking a chat name opens that chat in the app', async ($, on) => {
   const w = makeWorld(on, seed({ appId: APP_ID }))

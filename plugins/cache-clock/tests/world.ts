@@ -126,6 +126,7 @@ export function makeWorld(on: On, start: Record<string, unknown> = {}): World {
   on('turn.complete', () => ({ text: 'done' }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('session.end', (_, e) => ({ sessionId: e.sessionId }))
+  on('session.attach', (_, e) => ({ clientId: e.clientId }))
   on('prompt.submit', (_, e) => ({ text: e.text }))
   return w
 }

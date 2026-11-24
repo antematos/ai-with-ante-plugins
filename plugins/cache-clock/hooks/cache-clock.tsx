@@ -53,6 +53,8 @@ type Memory = {
   /** The `lastAt` of the warm period already warned about. */
   warnedAt: number | undefined
   names: Record<string, string>
+  /** The desktop app's ID for this chat, once the app has drawn it. */
+  appId: string | undefined
 }
 
 // ---- the shared store -------------------------------------------------------
@@ -77,14 +79,19 @@ function isChat(value: unknown): value is CacheClockChat {
 }
 
 /**
- * The desktop app's ID for this chat, when the session draws in the app. A
- * terminal or background run started from inside a desktop chat inherits that
- * chat's environment, so the variable alone does not make the ID its own.
+ * The desktop app's ID for this chat, kept once the app has drawn the session.
+ * A terminal or background run started from inside a desktop chat inherits
+ * that chat's environment but is never drawn in the app, so the variable alone
+ * does not make the ID its own. The app can leave a chat's surfaces while the
+ * chat keeps working, so the ID is remembered rather than checked each time.
+ * `isDrawn` says the app has just attached, whatever the roster reads yet.
  */
-async function appIdOf($: $): Promise<string | undefined> {
-  if (!(await $.session.surfaces()).includes('desktop')) return undefined
-  const value = await $.env.get('CLAUDE_CODE_HOST_SESSION_ID')
-  return isAppId(value) ? value : undefined
+async function appIdOf($: $, mem: Memory, isDrawn = false): Promise<string | undefined> {
+  if (mem.appId === undefined && (isDrawn || (await $.session.surfaces()).includes('desktop'))) {
+    const value = await $.env.get('CLAUDE_CODE_HOST_SESSION_ID')
+    if (isAppId(value)) mem.appId = value
+  }
+  return mem.appId
 }
 
 function isAppId(value: unknown): value is string {
@@ -205,6 +212,17 @@ async function tick($: $, mem: Memory): Promise<void> {
   }
 }
 
+/** Saves this chat's app ID on its record, for a chat that has not replied since. */
+async function noteAppId($: $, mem: Memory, isDrawn = false): Promise<void> {
+  const appId = await appIdOf($, mem, isDrawn)
+  if (appId === undefined) return
+  const id = await currentId($, mem)
+  const chat = await readChat($, id)
+  if (chat === undefined || chat.appId === appId) return
+  await $.store.set(CHAT + id, { ...chat, appId })
+  await refresh($, mem)
+}
+
 /** One keep-warm ping of this chat; a ping that misses the cache stops the hold. */
 async function ping($: $, mem: Memory, chat: CacheClockChat): Promise<void> {
   mem.isPinging = true
@@ -241,7 +259,8 @@ async function noteRequest($: $, mem: Memory, startedAt: number, used: Usage | n
   const before = await readChat($, id)
   const lifeMs = lifetimeOf(used, before?.lifeMs)
   if (lifeMs === undefined) return
-  const appId = await appIdOf($)
+  // A record is this chat's own, so an app ID it saved earlier stays its own.
+  const appId = (await appIdOf($, mem)) ?? before?.appId
   const chat: CacheClockChat = {
     id,
     name: mem.names[id] ?? before?.name ?? UNTITLED,
@@ -321,6 +340,7 @@ export const register: Register = on => {
     isPinging: false,
     warnedAt: undefined,
     names: {},
+    appId: undefined,
   }
 
   on('session.start', async ($, e, next) => {
@@ -333,8 +353,15 @@ export const register: Register = on => {
     mem.ticker?.cancel()
     mem.ticker = $.clock.every(1000, () => void tick($, mem))
     await refresh($, mem)
+    await noteAppId($, mem)
     return next(e)
   })
+
+  // The app draws this chat again, as when it is brought back on screen.
+  on('session.attach', { surface: 'desktop' }, async ($, e, next) => {
+    await noteAppId($, mem, true)
+    return next(e)
+  }).catch(($, e, next) => next(e))
 
   on('session.end', async ($, e, next) => {
     await leaveConversation($, e.sessionId)
