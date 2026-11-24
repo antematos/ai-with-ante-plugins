@@ -4,12 +4,12 @@ import type { EngineInterface, Register, RenderChildren, Timer } from 'claude-co
 import type { CacheClockChat, CacheClockSnapshot } from '../types'
 import {
   COLOR,
-  DROP_AFTER,
   SPINNER,
   cellsOf,
   clockText,
   colorOf,
   holdChoicesFor,
+  isListed,
   lifetimeOf,
   orderChats,
   phaseOf,
@@ -27,6 +27,8 @@ const snapAtom = atom({ plugin: 'cache-clock', key: 'snap' } as const, null, { s
 const runningAtom = atom({ plugin: 'cache-clock', key: 'isRunning' } as const, false)
 const frameAtom = atom({ plugin: 'cache-clock', key: 'frame' } as const, 0)
 const choosingAtom = atom({ plugin: 'cache-clock', key: 'isChoosing' } as const, false)
+/** The chat whose name was just pressed, shown as opening until the app switches. */
+const openingAtom = atom({ plugin: 'cache-clock', key: 'opening' } as const, null)
 
 const CHAT = 'chat:'
 const HOLD = 'hold:'
@@ -102,7 +104,10 @@ function isAppId(value: unknown): value is string {
  * Asks the computer to open chat `appId` in the desktop app, as an outside link
  * would; says where to find the chat when that fails.
  */
-async function openChat($: $, appId: string, name: string): Promise<void> {
+async function openChat($: $, id: string, appId: string, name: string): Promise<void> {
+  // Shown at once: the app takes a moment to switch once the computer passes it the link.
+  await update($, openingAtom, () => id)
+  void $.clock.after(3000, () => void update($, openingAtom, now => (now === id ? null : now)))
   const link = `claude://claude.ai/epitaxy/${appId}`
   let isOpened = false
   try {
@@ -154,13 +159,21 @@ async function currentId($: $, mem: Memory): Promise<string> {
   return id
 }
 
-/** A conversation this window no longer shows: its hold ends, it is not running. */
+/** A conversation this window no longer shows: its hold ends, it is not running, it is closed. */
 async function leaveConversation($: $, id: string): Promise<void> {
   await $.store.delete(HOLD + id)
   const chat = await readChat($, id)
-  if (chat !== undefined && chat.isRunning) {
-    await $.store.set(CHAT + id, { ...chat, isRunning: false })
+  if (chat !== undefined) {
+    await $.store.set(CHAT + id, { ...chat, isRunning: false, endedAt: await $.clock.now() })
   }
+}
+
+/** This window shows chat `id` again: its record is open. */
+async function reopen($: $, id: string): Promise<void> {
+  const chat = await readChat($, id)
+  if (chat?.endedAt === undefined) return
+  const { endedAt: _, ...open } = chat
+  await $.store.set(CHAT + id, open)
 }
 
 /** Reads every chat and hold from the store into the drawn snapshot. */
@@ -172,7 +185,7 @@ async function refresh($: $, mem: Memory): Promise<CacheClockSnapshot> {
   for (const key of await $.store.keys()) {
     if (key.startsWith(CHAT)) {
       const value = await $.store.get(key)
-      if (isChat(value) && value.lastAt + value.lifeMs + DROP_AFTER > now) chats.push(value)
+      if (isChat(value) && isListed(value, now)) chats.push(value)
     } else if (key.startsWith(HOLD)) {
       const until = untilOf(await $.store.get(key))
       const owner = key.slice(HOLD.length)
@@ -317,12 +330,12 @@ async function keepWarm($: $, mem: Memory): Promise<string> {
   return `Keeping this chat warm until ${timeOfDay(until)}.`
 }
 
-/** Removes chats that went cold more than a day ago, and holds past their end. */
+/** Removes chats the panel no longer lists, and holds past their end. */
 async function prune($: $): Promise<void> {
   const now = await $.clock.now()
   for (const key of await $.store.keys()) {
     const value = await $.store.get(key)
-    if (key.startsWith(CHAT) && isChat(value) && value.lastAt + value.lifeMs + DROP_AFTER <= now) {
+    if (key.startsWith(CHAT) && isChat(value) && !isListed(value, now)) {
       await $.store.delete(key)
     } else if (key.startsWith(HOLD) && (untilOf(value) ?? 0) <= now) {
       await $.store.delete(key)
@@ -347,6 +360,7 @@ export const register: Register = on => {
     const id = await $.session.id()
     mem.id = id
     await $.store.delete(HOLD + id)
+    await reopen($, id)
     await prune($)
     await $.command.register({ name: 'cache-clock', description: 'Show how long each chat stays warm' })
     await $.command.register({ name: 'keep-warm', description: 'Hold this chat warm, or stop the hold' })
@@ -494,6 +508,7 @@ export const register: Register = on => {
   // C. The side panel.
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const snap = await read($, snapAtom)
+    const opening = await read($, openingAtom)
     const { Box, Button, Text } = $.ui.resolve(e)
     const isNarrow = e.props.bodyColumns < 46
     const barCols = isNarrow ? 4 : 8
@@ -558,7 +573,7 @@ export const register: Register = on => {
       const appId = chat.appId
       const name =
         e.surface === 'desktop' && isAppId(appId) ? (
-          <Button key={`open:${chat.id}`} plain onPress={() => openChat($, appId, chat.name)}>
+          <Button key={`open:${chat.id}`} plain onPress={() => openChat($, chat.id, appId, chat.name)}>
             {label}
           </Button>
         ) : (
@@ -569,6 +584,9 @@ export const register: Register = on => {
           {sizeText(chat.size)}
         </Text>
       )
+      if (opening === chat.id) {
+        return columns(null, name, size, <Text color={COLOR.tick}>opening…</Text>, null, `row:${chat.id}`)
+      }
       if (r.kind === 'running') {
         return columns(character('running'), name, size, character('running'), null, `row:${chat.id}`)
       }

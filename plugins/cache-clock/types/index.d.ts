@@ -12,6 +12,8 @@ export type CacheClockChat = {
   isRunning: boolean
   /** The desktop app's own ID for the chat (`local_…`); absent outside the app. */
   appId?: string
+  /** When the chat's window closed or moved to another chat (ms); absent while open. */
+  endedAt?: number
 }
 
 /** What the drawings read, refreshed every second. */
@@ -33,6 +35,7 @@ declare module 'claude-code' {
       isRunning: boolean
       frame: number
       isChoosing: boolean
+      opening: string | null
     }
   }
 }

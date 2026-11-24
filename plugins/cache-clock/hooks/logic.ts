@@ -132,7 +132,17 @@ export function pingLeadFor(lifeMs: number): number {
 export const SPINNER = ['·', '✢', '✳', '✶', '✻', '✽', '✻', '✶', '✳', '✢'] as const
 
 /** A listed chat drops off this long after going cold. */
-export const DROP_AFTER = 24 * HOUR
+export const DROP_AFTER = 4 * HOUR
+
+/**
+ * Whether the panel still lists a chat: until four hours after it went cold,
+ * and a chat whose window has closed (archived, quit, /clear) only while warm.
+ */
+export function isListed(chat: CacheClockChat, now: number): boolean {
+  const coldAt = chat.lastAt + chat.lifeMs
+  if (chat.endedAt !== undefined && coldAt <= now && !chat.isRunning) return false
+  return coldAt + DROP_AFTER > now
+}
 
 export type ChatRow = {
   chat: CacheClockChat
