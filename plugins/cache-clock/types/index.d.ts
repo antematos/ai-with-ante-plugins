@@ -10,6 +10,8 @@ export type CacheClockChat = {
   /** How long the cache lives after `lastAt` (ms): 5 or 60 minutes. */
   lifeMs: number
   isRunning: boolean
+  /** The desktop app's own ID for the chat (`local_…`); absent outside the app. */
+  appId?: string
 }
 
 /** What the drawings read, refreshed every second. */

@@ -24,6 +24,16 @@ export type World = {
   id: string
   cwd: string
   opened: string[]
+  /** The process environment the plugin reads. */
+  env: Record<string, string>
+  /** The machine the session runs on; null makes the lookup fail. */
+  platform: 'macos' | 'windows' | 'linux' | null
+  /** Where the session draws: the desktop app, a terminal, or nowhere (a background run). */
+  surfaces: ('desktop' | 'terminal')[]
+  /** Every command the plugin ran, by its argument vector. */
+  ran: string[][]
+  /** The exit code the next command gives; null makes it fail to start. */
+  exitCode: number | null
 }
 
 export function usage(write5m: number, write1h: number, read: number, input = 1000): TurnUsage {
@@ -52,7 +62,25 @@ export function makeWorld(on: On, start: Record<string, unknown> = {}): World {
     id: 'chat-a',
     cwd: '/work/garden-notes',
     opened: [],
+    env: {},
+    platform: 'windows',
+    surfaces: ['desktop'],
+    ran: [],
+    exitCode: 0,
   }
+  on('env.get', (_, e) => ({ value: w.env[e.name] }))
+  on('session.surfaces', () => ({ value: [...w.surfaces] }))
+  on('session.info', () => {
+    if (w.platform === null) throw new Error('no session info')
+    return { value: { transcriptPath: '/t.jsonl', platform: w.platform } }
+  })
+  on('process.run', (_, e) => {
+    w.ran.push([...e.argv])
+    if (w.exitCode === null) throw new Error('cannot start')
+    return {
+      value: { exitCode: w.exitCode, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false },
+    }
+  })
   on('store.get', (_, e) => ({ value: w.store.get(e.key) }))
   on('store.set', (_, e) => {
     w.store.set(e.key, JSON.parse(JSON.stringify(e.value)))
@@ -98,6 +126,7 @@ export function makeWorld(on: On, start: Record<string, unknown> = {}): World {
   on('turn.complete', () => ({ text: 'done' }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('session.end', (_, e) => ({ sessionId: e.sessionId }))
+  on('session.attach', (_, e) => ({ clientId: e.clientId }))
   on('prompt.submit', (_, e) => ({ text: e.text }))
   return w
 }

@@ -32,6 +32,8 @@ const CHAT = 'chat:'
 const HOLD = 'hold:'
 const PANE = 'cache-clock'
 const UNTITLED = 'Untitled chat'
+/** The shape of the desktop app's chat IDs; nothing else is ever opened. */
+const APP_ID = /^local_[A-Za-z0-9-]{1,64}$/
 
 /** The keep-warm ping: a tiny question over the chat as last sent, read from the cache. */
 const PING =
@@ -51,6 +53,8 @@ type Memory = {
   /** The `lastAt` of the warm period already warned about. */
   warnedAt: number | undefined
   names: Record<string, string>
+  /** The desktop app's ID for this chat, once the app has drawn it. */
+  appId: string | undefined
 }
 
 // ---- the shared store -------------------------------------------------------
@@ -72,6 +76,50 @@ function isChat(value: unknown): value is CacheClockChat {
     typeof v.lifeMs === 'number' &&
     typeof v.isRunning === 'boolean'
   )
+}
+
+/**
+ * The desktop app's ID for this chat, kept once the app has drawn the session.
+ * A terminal or background run started from inside a desktop chat inherits
+ * that chat's environment but is never drawn in the app, so the variable alone
+ * does not make the ID its own. The app can leave a chat's surfaces while the
+ * chat keeps working, so the ID is remembered rather than checked each time.
+ * `isDrawn` says the app has just attached, whatever the roster reads yet.
+ */
+async function appIdOf($: $, mem: Memory, isDrawn = false): Promise<string | undefined> {
+  if (mem.appId === undefined && (isDrawn || (await $.session.surfaces()).includes('desktop'))) {
+    const value = await $.env.get('CLAUDE_CODE_HOST_SESSION_ID')
+    if (isAppId(value)) mem.appId = value
+  }
+  return mem.appId
+}
+
+function isAppId(value: unknown): value is string {
+  return typeof value === 'string' && APP_ID.test(value)
+}
+
+/**
+ * Asks the computer to open chat `appId` in the desktop app, as an outside link
+ * would; says where to find the chat when that fails.
+ */
+async function openChat($: $, appId: string, name: string): Promise<void> {
+  const link = `claude://claude.ai/epitaxy/${appId}`
+  let isOpened = false
+  try {
+    const { platform } = await $.session.info()
+    const argv =
+      platform === 'macos'
+        ? ['open', link]
+        : platform === 'windows'
+          ? ['rundll32', 'url.dll,FileProtocolHandler', link]
+          : null
+    if (argv !== null) {
+      isOpened = (await $.process.run(argv, { timeoutMs: 10_000 })).exitCode === 0
+    }
+  } catch {
+    isOpened = false
+  }
+  if (!isOpened) $.ui.toast(`Couldn’t open “${name}”. Find it in the sidebar.`)
 }
 
 function untilOf(value: unknown): number | undefined {
@@ -164,6 +212,17 @@ async function tick($: $, mem: Memory): Promise<void> {
   }
 }
 
+/** Saves this chat's app ID on its record, for a chat that has not replied since. */
+async function noteAppId($: $, mem: Memory, isDrawn = false): Promise<void> {
+  const appId = await appIdOf($, mem, isDrawn)
+  if (appId === undefined) return
+  const id = await currentId($, mem)
+  const chat = await readChat($, id)
+  if (chat === undefined || chat.appId === appId) return
+  await $.store.set(CHAT + id, { ...chat, appId })
+  await refresh($, mem)
+}
+
 /** One keep-warm ping of this chat; a ping that misses the cache stops the hold. */
 async function ping($: $, mem: Memory, chat: CacheClockChat): Promise<void> {
   mem.isPinging = true
@@ -200,6 +259,8 @@ async function noteRequest($: $, mem: Memory, startedAt: number, used: Usage | n
   const before = await readChat($, id)
   const lifeMs = lifetimeOf(used, before?.lifeMs)
   if (lifeMs === undefined) return
+  // A record is this chat's own, so an app ID it saved earlier stays its own.
+  const appId = (await appIdOf($, mem)) ?? before?.appId
   const chat: CacheClockChat = {
     id,
     name: mem.names[id] ?? before?.name ?? UNTITLED,
@@ -208,6 +269,7 @@ async function noteRequest($: $, mem: Memory, startedAt: number, used: Usage | n
     lastAt: startedAt,
     lifeMs,
     isRunning: await read($, runningAtom),
+    ...(appId === undefined ? {} : { appId }),
   }
   await $.store.set(CHAT + id, chat)
   await refresh($, mem)
@@ -278,6 +340,7 @@ export const register: Register = on => {
     isPinging: false,
     warnedAt: undefined,
     names: {},
+    appId: undefined,
   }
 
   on('session.start', async ($, e, next) => {
@@ -290,8 +353,15 @@ export const register: Register = on => {
     mem.ticker?.cancel()
     mem.ticker = $.clock.every(1000, () => void tick($, mem))
     await refresh($, mem)
+    await noteAppId($, mem)
     return next(e)
   })
+
+  // The app draws this chat again, as when it is brought back on screen.
+  on('session.attach', { surface: 'desktop' }, async ($, e, next) => {
+    await noteAppId($, mem, true)
+    return next(e)
+  }).catch(($, e, next) => next(e))
 
   on('session.end', async ($, e, next) => {
     await leaveConversation($, e.sessionId)
@@ -480,11 +550,20 @@ export const register: Register = on => {
     const row = (r: ChatRow) => {
       const { chat } = r
       const isCold = r.kind === 'cold'
-      const name = (
+      const label = (
         <Text wrap="truncate" maxLines={1} color={isCold ? COLOR.quiet : undefined}>
           {chat.name}
         </Text>
       )
+      const appId = chat.appId
+      const name =
+        e.surface === 'desktop' && isAppId(appId) ? (
+          <Button key={`open:${chat.id}`} plain onPress={() => openChat($, appId, chat.name)}>
+            {label}
+          </Button>
+        ) : (
+          label
+        )
       const size = (
         <Text color={COLOR.quiet} tabular>
           {sizeText(chat.size)}
