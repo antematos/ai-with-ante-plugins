@@ -103,3 +103,36 @@ test('clicking a name shows “opening” on that row at once, for a few seconds
   expect(await ui.find({ type: 'Text', text: 'opening…' })).toBeUndefined()
   await ui.unmount()
 })
+
+test('a chat the window returns to is open again: once cold, its footer still says cold', { timeoutMs: 60_000 }, async ($, on) => {
+  // An in-process resume or /clear fires no session.start.
+  const w = makeWorld(on)
+  await start($)
+  await turn($, w, usage(0, 8000, 0))
+  await $.session.end({ reason: 'resume', sessionId: 'chat-a', resume: {} as never })
+  w.id = 'chat-b'
+  await turn($, w, usage(0, 8000, 0))
+  await $.session.end({ reason: 'resume', sessionId: 'chat-b', resume: {} as never })
+  w.id = 'chat-a'
+  await w.clock.advance(2000)
+  expect(w.store.get('chat:chat-a')).not.toHaveProperty('endedAt')
+  await w.clock.advance(61 * MIN)
+  const ui = await $.ui.mount({ plugin: 'cache-clock', component: 'SessionMode', props: { modes: [] }, surface: 'desktop' } as const)
+  expect(await ui.find({ type: 'Text', text: 'cold' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('pressing a name again keeps “opening…” for its own three seconds', async ($, on) => {
+  const w = makeWorld(on, {
+    'chat:seed': { ...cold('seed', 'Seed order list', 0)['chat:seed'], lastAt: T0 - 10 * MIN, appId: APP_ID },
+  })
+  await start($)
+  await turn($, w, usage(0, 0, 400_000))
+  const ui = await $.ui.mount(pane())
+  await ui.press({ key: 'open:seed' })
+  await w.clock.advance(2500)
+  await ui.press({ key: 'open:seed' })
+  await w.clock.advance(1000)
+  expect(await ui.find({ type: 'Text', text: 'opening…' })).toBeDefined()
+  await ui.unmount()
+})

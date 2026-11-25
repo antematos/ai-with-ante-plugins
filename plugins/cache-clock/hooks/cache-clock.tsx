@@ -57,6 +57,8 @@ type Memory = {
   names: Record<string, string>
   /** The desktop app's ID for this chat, once the app has drawn it. */
   appId: string | undefined
+  /** Clears the "opening…" row; replaced by each new press. */
+  openingTimer: Timer | undefined
 }
 
 // ---- the shared store -------------------------------------------------------
@@ -104,10 +106,11 @@ function isAppId(value: unknown): value is string {
  * Asks the computer to open chat `appId` in the desktop app, as an outside link
  * would; says where to find the chat when that fails.
  */
-async function openChat($: $, id: string, appId: string, name: string): Promise<void> {
+async function openChat($: $, mem: Memory, id: string, appId: string, name: string): Promise<void> {
   // Shown at once: the app takes a moment to switch once the computer passes it the link.
+  mem.openingTimer?.cancel()
   await update($, openingAtom, () => id)
-  void $.clock.after(3000, () => void update($, openingAtom, now => (now === id ? null : now)))
+  mem.openingTimer = $.clock.after(3000, () => void update($, openingAtom, () => null))
   const link = `claude://claude.ai/epitaxy/${appId}`
   let isOpened = false
   try {
@@ -154,6 +157,7 @@ async function currentId($: $, mem: Memory): Promise<string> {
     mem.warnedAt = undefined
     await leaveConversation($, old)
     await $.store.delete(HOLD + id)
+    await reopen($, id)
   }
   mem.id = id
   return id
@@ -354,6 +358,7 @@ export const register: Register = on => {
     warnedAt: undefined,
     names: {},
     appId: undefined,
+    openingTimer: undefined,
   }
 
   on('session.start', async ($, e, next) => {
@@ -573,7 +578,7 @@ export const register: Register = on => {
       const appId = chat.appId
       const name =
         e.surface === 'desktop' && isAppId(appId) ? (
-          <Button key={`open:${chat.id}`} plain onPress={() => openChat($, chat.id, appId, chat.name)}>
+          <Button key={`open:${chat.id}`} plain onPress={() => openChat($, mem, chat.id, appId, chat.name)}>
             {label}
           </Button>
         ) : (
