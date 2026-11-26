@@ -65,6 +65,8 @@ Type:
 
 A panel opens beside the chat. It lists every chat on this computer that runs Cache Clock, grouped by project, the most urgent first.
 
+The panel stays open until you close it with the ×. If the app puts that chat to sleep while you are away, the panel comes back when you return to the chat.
+
 | Column | Shows |
 |---|---|
 | (bar) | How much time is left |

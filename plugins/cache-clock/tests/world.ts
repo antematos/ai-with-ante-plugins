@@ -24,6 +24,8 @@ export type World = {
   id: string
   cwd: string
   opened: string[]
+  /** The panes open right now, by id; an engine restart empties it. */
+  panes: Set<string>
   /** The process environment the plugin reads. */
   env: Record<string, string>
   /** The machine the session runs on; null makes the lookup fail. */
@@ -62,6 +64,7 @@ export function makeWorld(on: On, start: Record<string, unknown> = {}): World {
     id: 'chat-a',
     cwd: '/work/garden-notes',
     opened: [],
+    panes: new Set(),
     env: {},
     platform: 'windows',
     surfaces: ['desktop'],
@@ -101,8 +104,16 @@ export function makeWorld(on: On, start: Record<string, unknown> = {}): World {
   })
   on('ui.open', (_, e) => {
     w.opened.push(e.id)
+    w.panes.add(e.id)
     return { value: { isPlaced: true } }
   })
+  on('ui.close', (_, e) => {
+    w.panes.delete(e.id)
+    return { value: undefined }
+  })
+  on('ui.panes', () => ({
+    value: [...w.panes].map(id => ({ id, title: id, isShown: true, isFocused: false, isPlaced: true })),
+  }))
   on('model.fork', async (_, e) => {
     w.forks.push(e.prompt)
     w.forkEfforts.push(e.effort)

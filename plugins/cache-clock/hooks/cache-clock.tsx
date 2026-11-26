@@ -33,6 +33,10 @@ const openingAtom = atom({ plugin: 'cache-clock', key: 'opening' } as const, nul
 const CHAT = 'chat:'
 const HOLD = 'hold:'
 const PANE = 'cache-clock'
+/** `pane:<id>`: chat `id` asked for the panel and has not closed it by hand. */
+const PANE_WISH = 'pane:'
+/** A panel wish for a chat not seen this long is forgotten. */
+const WISH_FOR = 30 * 24 * 60 * 60 * 1000
 const UNTITLED = 'Untitled chat'
 /** The shape of the desktop app's chat IDs; nothing else is ever opened. */
 const APP_ID = /^local_[A-Za-z0-9-]{1,64}$/
@@ -59,6 +63,8 @@ type Memory = {
   appId: string | undefined
   /** Clears the "opening…" row; replaced by each new press. */
   openingTimer: Timer | undefined
+  /** The panel was up when last looked: its going away while this chat runs means closed by hand. */
+  isPaneUp: boolean
 }
 
 // ---- the shared store -------------------------------------------------------
@@ -136,6 +142,12 @@ function untilOf(value: unknown): number | undefined {
   return typeof until === 'number' ? until : undefined
 }
 
+function atOf(value: unknown): number | undefined {
+  if (typeof value !== 'object' || value === null) return undefined
+  const at = (value as { at?: unknown }).at
+  return typeof at === 'number' ? at : undefined
+}
+
 function projectOf(cwd: string): string {
   const parts = cwd.split(/[\\/]/).filter(part => part !== '')
   return parts[parts.length - 1] ?? cwd
@@ -158,6 +170,11 @@ async function currentId($: $, mem: Memory): Promise<string> {
     await leaveConversation($, old)
     await $.store.delete(HOLD + id)
     await reopen($, id)
+    // The panel belongs to the window: it follows the window to its new chat.
+    if (mem.isPaneUp) {
+      await $.store.delete(PANE_WISH + old)
+      await $.store.set(PANE_WISH + id, { at: await $.clock.now() })
+    }
   }
   mem.id = id
   return id
@@ -203,8 +220,44 @@ async function refresh($: $, mem: Memory): Promise<CacheClockSnapshot> {
   return snap
 }
 
+async function isPaneOpen($: $): Promise<boolean> {
+  return (await $.ui.panes()).some(pane => pane.id === PANE)
+}
+
+/** /cache-clock: opens the panel and remembers this chat wants it. */
+async function openPane($: $, mem: Memory): Promise<void> {
+  await $.ui.open({ id: PANE, title: 'Cache Clock' })
+  const id = await currentId($, mem)
+  await $.store.set(PANE_WISH + id, { at: await $.clock.now() })
+  mem.isPaneUp = await isPaneOpen($)
+}
+
+/**
+ * Brings the panel back to a chat that asked for it and never closed it by
+ * hand: the app shuts an idle chat's engine down, and its panel goes with it.
+ */
+async function restorePane($: $, mem: Memory): Promise<void> {
+  const id = await currentId($, mem)
+  if ((await $.store.get(PANE_WISH + id)) === undefined) return
+  try {
+    if (!(await isPaneOpen($))) await $.ui.open({ id: PANE, title: 'Cache Clock' })
+    mem.isPaneUp = await isPaneOpen($)
+    if (mem.isPaneUp) await $.store.set(PANE_WISH + id, { at: await $.clock.now() })
+  } catch {
+    // Refused for now; the wish stays for the next start.
+  }
+}
+
+/** A panel that went away while this chat ran was closed by hand: forget the wish. */
+async function notePaneClosed($: $, mem: Memory): Promise<void> {
+  if (!mem.isPaneUp || (await isPaneOpen($))) return
+  mem.isPaneUp = false
+  await $.store.delete(PANE_WISH + (await currentId($, mem)))
+}
+
 /** Once a second: redraw, warn once on red, ping a held chat before it cools. */
 async function tick($: $, mem: Memory): Promise<void> {
+  await notePaneClosed($, mem)
   const snap = await refresh($, mem)
   const me = snap.me
   if (me === null) return
@@ -343,6 +396,8 @@ async function prune($: $): Promise<void> {
       await $.store.delete(key)
     } else if (key.startsWith(HOLD) && (untilOf(value) ?? 0) <= now) {
       await $.store.delete(key)
+    } else if (key.startsWith(PANE_WISH) && (atOf(value) ?? 0) + WISH_FOR <= now) {
+      await $.store.delete(key)
     }
   }
 }
@@ -359,6 +414,7 @@ export const register: Register = on => {
     names: {},
     appId: undefined,
     openingTimer: undefined,
+    isPaneUp: false,
   }
 
   on('session.start', async ($, e, next) => {
@@ -373,12 +429,14 @@ export const register: Register = on => {
     mem.ticker = $.clock.every(1000, () => void tick($, mem))
     await refresh($, mem)
     await noteAppId($, mem)
+    await restorePane($, mem)
     return next(e)
   })
 
   // The app draws this chat again, as when it is brought back on screen.
   on('session.attach', { surface: 'desktop' }, async ($, e, next) => {
     await noteAppId($, mem, true)
+    await restorePane($, mem)
     return next(e)
   }).catch(($, e, next) => next(e))
 
@@ -404,7 +462,7 @@ export const register: Register = on => {
   }).catch(($, e, next) => next(e))
 
   on('command.run', { command: 'cache-clock' }, async $ => {
-    await $.ui.open({ id: PANE, title: 'Cache Clock' })
+    await openPane($, mem)
     return { text: 'Cache Clock panel opened.' }
   })
 
