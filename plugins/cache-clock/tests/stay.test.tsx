@@ -4,7 +4,7 @@ import { start } from './turns'
 
 const run = { command: 'cache-clock', args: '', origin: { kind: 'composer' } as never, presentation: {} as never }
 
-test('the panel comes back when its chat starts again, until it is closed by hand', async ($, on) => {
+test('the panel comes back when its chat starts again', async ($, on) => {
   const w = makeWorld(on)
   await start($)
   await $.command.run(run)
@@ -14,10 +14,25 @@ test('the panel comes back when its chat starts again, until it is closed by han
   w.panes.clear()
   await start($)
   expect(w.panes.has('cache-clock')).toBe(true)
+})
 
-  // Closed by hand while the chat runs: it stays closed.
+test('a panel dropped a moment before the chat stops still comes back', async ($, on) => {
+  // Only the person's own close forgets the panel, never its disappearing.
+  const w = makeWorld(on)
+  await start($)
+  await $.command.run(run)
   w.panes.delete('cache-clock')
-  await w.clock.advance(1000)
+  await w.clock.advance(3000)
+  await start($)
+  expect(w.panes.has('cache-clock')).toBe(true)
+})
+
+test('a terminal resume of a chat that had the panel opens none unasked', async ($, on) => {
+  const w = makeWorld(on)
+  await start($)
+  await $.command.run(run)
+  w.panes.clear()
+  w.surfaces = ['terminal']
   await start($)
   expect(w.panes.has('cache-clock')).toBe(false)
 })

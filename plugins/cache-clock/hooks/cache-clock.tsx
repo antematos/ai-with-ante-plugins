@@ -236,7 +236,9 @@ async function openPane($: $, mem: Memory): Promise<void> {
  * Brings the panel back to a chat that asked for it and never closed it by
  * hand: the app shuts an idle chat's engine down, and its panel goes with it.
  */
-async function restorePane($: $, mem: Memory): Promise<void> {
+async function restorePane($: $, mem: Memory, isDrawn = false): Promise<void> {
+  // Only where the app draws this chat: a terminal resume of it gets no panel unasked.
+  if (!isDrawn && !(await $.session.surfaces()).includes('desktop')) return
   const id = await currentId($, mem)
   if ((await $.store.get(PANE_WISH + id)) === undefined) return
   try {
@@ -248,16 +250,8 @@ async function restorePane($: $, mem: Memory): Promise<void> {
   }
 }
 
-/** A panel that went away while this chat ran was closed by hand: forget the wish. */
-async function notePaneClosed($: $, mem: Memory): Promise<void> {
-  if (!mem.isPaneUp || (await isPaneOpen($))) return
-  mem.isPaneUp = false
-  await $.store.delete(PANE_WISH + (await currentId($, mem)))
-}
-
 /** Once a second: redraw, warn once on red, ping a held chat before it cools. */
 async function tick($: $, mem: Memory): Promise<void> {
-  await notePaneClosed($, mem)
   const snap = await refresh($, mem)
   const me = snap.me
   if (me === null) return
@@ -436,7 +430,17 @@ export const register: Register = on => {
   // The app draws this chat again, as when it is brought back on screen.
   on('session.attach', { surface: 'desktop' }, async ($, e, next) => {
     await noteAppId($, mem, true)
-    await restorePane($, mem)
+    await restorePane($, mem, true)
+    return next(e)
+  }).catch(($, e, next) => next(e))
+
+  // Closed by hand (its × or close key): the panel is not brought back. An
+  // engine unload or shutdown is not the person's choice, so the wish stays.
+  on('ui.close', async ($, e, next) => {
+    if (e.id === PANE && e.origin.kind === 'person') {
+      mem.isPaneUp = false
+      await $.store.delete(PANE_WISH + (await currentId($, mem)))
+    }
     return next(e)
   }).catch(($, e, next) => next(e))
 
