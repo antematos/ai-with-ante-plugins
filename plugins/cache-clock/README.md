@@ -4,6 +4,23 @@ See how long each chat stays "warm", so you can reply before it goes cold.
 
 ## Install
 
+The steps are the same on Mac and Windows. Pick the way you use Claude Code.
+
+### In the desktop app
+
+1. In any Claude Code chat, type `/plugin` and press Enter. The Plugins screen opens.
+2. Click **Add** (top right), then **Add marketplace**.
+3. Click **Add from a repository**, paste this link, and confirm:
+
+   ```
+   https://github.com/antematos/ai-with-ante-plugins
+   ```
+
+4. Find **Cache Clock** in the list and click **Install**.
+5. Quit Claude completely and open it again.
+
+### In a terminal
+
 Paste these into Claude Code, one at a time:
 
 ```
