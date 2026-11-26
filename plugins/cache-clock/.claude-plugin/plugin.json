@@ -1,6 +1,6 @@
 {
   "name": "cache-clock",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "Shows how long each chat's prompt cache stays warm, beside the model name and in a side panel, with an optional hold that keeps a chat warm.",
   "author": {
     "name": "Ante Matos",

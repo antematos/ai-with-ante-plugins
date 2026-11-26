@@ -28,6 +28,10 @@ export type World = {
   panes: Set<string>
   /** Transcript files removed from disk, as when a chat is deleted. */
   deleted: Set<string>
+  /** Files the plugin may read, by path (`/t/chat-a.jsonl`), with their text. */
+  files: Record<string, string>
+  /** What `git remote get-url origin` prints in the project; undefined: no remote. */
+  gitRemote: string | undefined
   /** The process environment the plugin reads. */
   env: Record<string, string>
   /** The machine the session runs on; null makes the lookup fail. */
@@ -68,6 +72,8 @@ export function makeWorld(on: On, start: Record<string, unknown> = {}): World {
     opened: [],
     panes: new Set(),
     deleted: new Set(),
+    files: {},
+    gitRemote: undefined,
     env: {},
     platform: 'windows',
     surfaces: ['desktop'],
@@ -81,8 +87,26 @@ export function makeWorld(on: On, start: Record<string, unknown> = {}): World {
     return { value: { transcriptPath: `/t/${w.id}.jsonl`, platform: w.platform } }
   })
   // The engine hands the path on in the machine's own spelling (a drive and backslashes on Windows).
-  on('fs.exists', (_, e) => ({ value: !w.deleted.has(e.path.replace(/^[A-Za-z]:/, '').replace(/\\/g, '/')) }))
+  const plain = (path: string) => path.replace(/^[A-Za-z]:/, '').replace(/\\/g, '/')
+  on('fs.stat', (_, e) => {
+    const text = w.files[plain(e.path)]
+    if (text === undefined) throw new Error('missing')
+    return { value: { kind: 'file', size: text.length, mtimeMs: 0, isLink: false } }
+  })
+  on('fs.read', (_, e) => {
+    const text = w.files[plain(e.path)]
+    if (text === undefined) throw new Error('missing')
+    const from = e.offset ?? 0
+    return { value: text.slice(from, e.length === undefined ? undefined : from + e.length) }
+  })
+  on('fs.exists', (_, e) => ({ value: !w.deleted.has(plain(e.path)) }))
   on('process.run', (_, e) => {
+    if (e.argv[0] === 'git') {
+      const out = w.gitRemote
+      return {
+        value: { exitCode: out === undefined ? 2 : 0, stdout: out === undefined ? '' : `${out}\n`, stderr: '', isStdoutTruncated: false, isStderrTruncated: false },
+      }
+    }
     w.ran.push([...e.argv])
     if (w.exitCode === null) throw new Error('cannot start')
     return {

@@ -15,9 +15,11 @@ import {
   phaseOf,
   pingLeadFor,
   quickHoldFor,
+  repoNameOf,
   sizeOf,
   sizeText,
   timeOfDay,
+  titleIn,
 } from './logic'
 import type { ChatRow, Usage } from './logic'
 
@@ -65,6 +67,10 @@ type Memory = {
   openingTimer: Timer | undefined
   /** The panel was up when last looked: its going away while this chat runs means closed by hand. */
   isPaneUp: boolean
+  /** The project's name as the app shows it: the repository's, else the folder's. */
+  project: string | undefined
+  /** Ticks since the title was last read. */
+  titleTicks: number
 }
 
 // ---- the shared store -------------------------------------------------------
@@ -279,6 +285,8 @@ async function restorePane($: $, mem: Memory, isDrawn = false): Promise<void> {
 
 /** Once a second: redraw, warn once on red, ping a held chat before it cools. */
 async function tick($: $, mem: Memory): Promise<void> {
+  mem.titleTicks += 1
+  if (mem.titleTicks >= 30) await noteOwnTitle($, mem)
   const snap = await refresh($, mem)
   const me = snap.me
   if (me === null) return
@@ -342,6 +350,51 @@ async function ping($: $, mem: Memory, chat: CacheClockChat): Promise<void> {
   }
 }
 
+/** The project's name as the app shows it: its git repository's name, else its folder's. */
+async function projectNameOf($: $, mem: Memory): Promise<string> {
+  if (mem.project !== undefined) return mem.project
+  const root = await $.session.root()
+  let name: string | undefined
+  try {
+    const run = await $.process.run(['git', '-C', root, 'remote', 'get-url', 'origin'], { timeoutMs: 5000 })
+    if (run.exitCode === 0) name = repoNameOf(run.stdout)
+  } catch {
+    // No git: the folder's name.
+  }
+  mem.project = name ?? projectOf(root)
+  return mem.project
+}
+
+/** The most of a transcript read to find its title. */
+const TITLE_TAIL = 256 * 1024
+const TITLE_MAX = 4 * 1024 * 1024
+
+/** At start: this chat's record takes the app's project and title, before any reply. */
+async function noteNames($: $, mem: Memory): Promise<void> {
+  const project = await projectNameOf($, mem)
+  const id = await currentId($, mem)
+  const chat = await readChat($, id)
+  if (chat !== undefined && chat.project !== project) await $.store.set(CHAT + id, { ...chat, project })
+  await noteOwnTitle($, mem)
+}
+
+/** Reads this chat's title from its transcript, as the app shows it, and saves it. */
+async function noteOwnTitle($: $, mem: Memory): Promise<void> {
+  mem.titleTicks = 0
+  const path = await transcriptOf($)
+  if (path === undefined) return
+  try {
+    const { size } = await $.fs.stat(path)
+    const from = Math.max(0, size - TITLE_TAIL)
+    let title = titleIn(await $.fs.read(path, { offset: from, length: TITLE_TAIL }))
+    // The title can sit early in a long chat: then read from the start.
+    if (title === undefined && from > 0) title = titleIn(await $.fs.read(path, { offset: 0, length: Math.min(size, TITLE_MAX) }))
+    await noteTitle($, mem, await currentId($, mem), title)
+  } catch {
+    // Unreadable now; the next read tries again.
+  }
+}
+
 // ---- the main thread's requests and turns -----------------------------------
 
 async function noteRequest($: $, mem: Memory, startedAt: number, used: Usage | null): Promise<void> {
@@ -356,7 +409,7 @@ async function noteRequest($: $, mem: Memory, startedAt: number, used: Usage | n
   const chat: CacheClockChat = {
     id,
     name: mem.names[id] ?? before?.name ?? UNTITLED,
-    project: projectOf(await $.session.root()),
+    project: await projectNameOf($, mem),
     size: sizeOf(used),
     lastAt: startedAt,
     lifeMs,
@@ -438,6 +491,8 @@ export const register: Register = on => {
     appId: undefined,
     openingTimer: undefined,
     isPaneUp: false,
+    project: undefined,
+    titleTicks: 0,
   }
 
   on('session.start', async ($, e, next) => {
@@ -453,6 +508,7 @@ export const register: Register = on => {
     await refresh($, mem)
     await noteAppId($, mem)
     await restorePane($, mem)
+    await noteNames($, mem)
     return next(e)
   })
 
@@ -460,6 +516,7 @@ export const register: Register = on => {
   on('session.attach', { surface: 'desktop' }, async ($, e, next) => {
     await noteAppId($, mem, true)
     await restorePane($, mem, true)
+    await noteOwnTitle($, mem)
     return next(e)
   }).catch(($, e, next) => next(e))
 
@@ -507,7 +564,10 @@ export const register: Register = on => {
   })
 
   on('turn.complete', async ($, e, next) => {
-    if (e.agentId === undefined) await setRunning($, mem, false)
+    if (e.agentId === undefined) {
+      await setRunning($, mem, false)
+      await noteOwnTitle($, mem)
+    }
     return next(e)
   })
 

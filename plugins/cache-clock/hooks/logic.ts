@@ -192,3 +192,36 @@ export function orderChats(
   }
   return groups
 }
+
+/**
+ * The chat's title as the app shows it, from its transcript's text: the
+ * latest name the person gave (`custom-title`), else the latest the app gave
+ * (`ai-title`). Undefined when the text holds neither.
+ */
+export function titleIn(text: string): string | undefined {
+  let custom: string | undefined
+  let ai: string | undefined
+  for (const line of text.split('\n')) {
+    if (!line.includes('-title"')) continue
+    let entry: unknown
+    try {
+      entry = JSON.parse(line)
+    } catch {
+      continue // a line cut at the start of a partial read
+    }
+    if (typeof entry !== 'object' || entry === null) continue
+    const e = entry as { type?: unknown; customTitle?: unknown; aiTitle?: unknown }
+    if (e.type === 'custom-title' && typeof e.customTitle === 'string' && e.customTitle.trim() !== '') {
+      custom = e.customTitle.trim()
+    } else if (e.type === 'ai-title' && typeof e.aiTitle === 'string' && e.aiTitle.trim() !== '') {
+      ai = e.aiTitle.trim()
+    }
+  }
+  return custom ?? ai
+}
+
+/** A repository's name from its remote address: `…/case-library.git` gives `case-library`. */
+export function repoNameOf(remote: string): string | undefined {
+  const parts = remote.trim().replace(/\.git$/, '').split(/[\\/:]/).filter(part => part !== '')
+  return parts[parts.length - 1]
+}
