@@ -121,7 +121,23 @@ test('an older record with no folder takes its repository from the transcript’
   expect(w.store.get('chat:other')).toMatchObject({ project: 'case-library' })
 })
 
-test('the working folder: the latest a transcript records', () => {
-  expect(cwdIn(line({ cwd: '/a' }) + line({ type: 'x' }) + line({ cwd: '/b' }))).toBe('/b')
+test('the working folder: the first a transcript records, where the chat started', () => {
+  // Later entries follow the shell wherever it moved.
+  expect(cwdIn(line({ cwd: '/a' }) + line({ type: 'x' }) + line({ cwd: '/b' }))).toBe('/a')
   expect(cwdIn(line({ type: 'x' }))).toBeUndefined()
+})
+
+test('a chat whose shell moved into another repository keeps its own project', async ($, on) => {
+  const w = makeWorld(on)
+  w.gitRemotes = { '/work/home': '', '/work/home/config': 'https://github.com/someone/settings-repo.git' }
+  await start($)
+  await turn($, w, usage(0, 0, 400_000))
+  const now = (w.store.get('chat:chat-a') as { lastAt: number }).lastAt
+  asleep(w, 'Some chat', 'home')
+  const record = w.store.get('chat:other') as Record<string, unknown>
+  delete record.root
+  record.lastAt = now
+  w.files['/t/other.jsonl'] = line({ type: 'user', cwd: '/work/home' }) + line({ type: 'tool', cwd: '/work/home/config' })
+  await w.clock.advance(MIN / 2)
+  expect(w.store.get('chat:other')).toMatchObject({ project: 'home' })
 })

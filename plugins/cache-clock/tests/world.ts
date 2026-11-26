@@ -32,6 +32,8 @@ export type World = {
   files: Record<string, string>
   /** What `git remote get-url origin` prints in the project; undefined: no remote. */
   gitRemote: string | undefined
+  /** Per folder, what `git remote get-url origin` prints there; overrides `gitRemote`. */
+  gitRemotes: Record<string, string> | undefined
   /** The process environment the plugin reads. */
   env: Record<string, string>
   /** The machine the session runs on; null makes the lookup fail. */
@@ -74,6 +76,7 @@ export function makeWorld(on: On, start: Record<string, unknown> = {}): World {
     deleted: new Set(),
     files: {},
     gitRemote: undefined,
+    gitRemotes: undefined,
     env: {},
     platform: 'windows',
     surfaces: ['desktop'],
@@ -102,7 +105,7 @@ export function makeWorld(on: On, start: Record<string, unknown> = {}): World {
   on('fs.exists', (_, e) => ({ value: !w.deleted.has(plain(e.path)) }))
   on('process.run', (_, e) => {
     if (e.argv[0] === 'git') {
-      const out = w.gitRemote
+      const out = w.gitRemotes === undefined ? w.gitRemote : w.gitRemotes[plain(e.argv[2] ?? '')]
       return {
         value: { exitCode: out === undefined ? 2 : 0, stdout: out === undefined ? '' : `${out}\n`, stderr: '', isStdoutTruncated: false, isStderrTruncated: false },
       }

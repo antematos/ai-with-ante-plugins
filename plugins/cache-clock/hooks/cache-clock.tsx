@@ -420,9 +420,8 @@ async function titleAt($: $, path: string): Promise<string | undefined> {
 /** The repository a transcript's chat works in, from the folder it records; undefined outside one. */
 async function repoFromTranscript($: $, mem: Memory, path: string): Promise<string | undefined> {
   try {
-    const { size } = await $.fs.stat(path)
-    const from = Math.max(0, size - TITLE_TAIL)
-    const cwd = cwdIn(await $.fs.read(path, { offset: from, length: TITLE_TAIL }))
+    // The start of the transcript: where the chat began, not where its shell went.
+    const cwd = cwdIn(await $.fs.read(path, { offset: 0, length: TITLE_TAIL }))
     return cwd === undefined ? undefined : await repoAt($, mem, cwd)
   } catch {
     return undefined

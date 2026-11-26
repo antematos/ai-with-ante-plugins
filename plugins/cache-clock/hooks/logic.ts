@@ -220,19 +220,21 @@ export function titleIn(text: string): string | undefined {
   return custom ?? ai
 }
 
-/** The latest working folder a transcript's text records (`"cwd"`), if any. */
+/**
+ * The folder a chat started in: the first working folder its transcript's
+ * text records (`"cwd"`). Later entries follow the shell wherever it moved.
+ */
 export function cwdIn(text: string): string | undefined {
-  let cwd: string | undefined
   for (const line of text.split('\n')) {
     if (!line.includes('"cwd"')) continue
     try {
       const entry = JSON.parse(line) as { cwd?: unknown }
-      if (typeof entry.cwd === 'string' && entry.cwd !== '') cwd = entry.cwd
+      if (typeof entry.cwd === 'string' && entry.cwd !== '') return entry.cwd
     } catch {
-      // a line cut at the start of a partial read
+      // a line cut at the end of a partial read
     }
   }
-  return cwd
+  return undefined
 }
 
 /** A repository's name from its remote address: `…/case-library.git` gives `case-library`. */
