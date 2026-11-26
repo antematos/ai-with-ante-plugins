@@ -10,7 +10,7 @@
       "name": "cache-clock",
       "source": "./plugins/cache-clock",
       "description": "See how long each chat's prompt cache stays warm, and hold a chat warm.",
-      "version": "0.2.2"
+      "version": "0.2.3"
     }
   ]
 }

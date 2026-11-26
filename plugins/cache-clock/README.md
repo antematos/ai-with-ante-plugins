@@ -75,7 +75,7 @@ The panel stays open until you close it with the ×. If the app puts that chat t
 | Time | Time left, the hold's end time (for example `4:30 pm`) when held, `cold`, or the Claude Code character while that chat is working |
 | Hold | Tick to hold that chat for 8 hours (45 minutes on a 5-minute cache); untick to stop |
 
-A cold chat stays in the list, greyed, for 4 hours and then drops off. A chat you have closed or archived drops off as soon as it goes cold.
+A cold chat stays in the list, greyed, for 4 hours and then drops off. A chat you delete drops off at once. A chat you have closed or archived drops off as soon as it goes cold.
 
 A chat's name becomes clickable once you have looked at that chat in the desktop app while it runs Cache Clock 0.2.0 or later. Some names stay plain text:
 

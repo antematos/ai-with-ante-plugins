@@ -26,6 +26,8 @@ export type World = {
   opened: string[]
   /** The panes open right now, by id; an engine restart empties it. */
   panes: Set<string>
+  /** Transcript files removed from disk, as when a chat is deleted. */
+  deleted: Set<string>
   /** The process environment the plugin reads. */
   env: Record<string, string>
   /** The machine the session runs on; null makes the lookup fail. */
@@ -65,6 +67,7 @@ export function makeWorld(on: On, start: Record<string, unknown> = {}): World {
     cwd: '/work/garden-notes',
     opened: [],
     panes: new Set(),
+    deleted: new Set(),
     env: {},
     platform: 'windows',
     surfaces: ['desktop'],
@@ -75,8 +78,10 @@ export function makeWorld(on: On, start: Record<string, unknown> = {}): World {
   on('session.surfaces', () => ({ value: [...w.surfaces] }))
   on('session.info', () => {
     if (w.platform === null) throw new Error('no session info')
-    return { value: { transcriptPath: '/t.jsonl', platform: w.platform } }
+    return { value: { transcriptPath: `/t/${w.id}.jsonl`, platform: w.platform } }
   })
+  // The engine hands the path on in the machine's own spelling (a drive and backslashes on Windows).
+  on('fs.exists', (_, e) => ({ value: !w.deleted.has(e.path.replace(/^[A-Za-z]:/, '').replace(/\\/g, '/')) }))
   on('process.run', (_, e) => {
     w.ran.push([...e.argv])
     if (w.exitCode === null) throw new Error('cannot start')

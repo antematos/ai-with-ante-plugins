@@ -197,6 +197,27 @@ async function reopen($: $, id: string): Promise<void> {
   await $.store.set(CHAT + id, open)
 }
 
+/** Whether chat `chat` was deleted: its conversation file is gone from disk. */
+async function isDeleted($: $, chat: CacheClockChat): Promise<boolean> {
+  if (chat.transcript === undefined) return false
+  try {
+    return !(await $.fs.exists(chat.transcript))
+  } catch {
+    return false
+  }
+}
+
+/** This chat's conversation file, where the engine says. */
+async function transcriptOf($: $): Promise<string | undefined> {
+  try {
+    const path = (await $.session.info()).transcriptPath
+    // A run that keeps no transcript must not read as deleted.
+    return path !== '' && (await $.fs.exists(path)) ? path : undefined
+  } catch {
+    return undefined
+  }
+}
+
 /** Reads every chat and hold from the store into the drawn snapshot. */
 async function refresh($: $, mem: Memory): Promise<CacheClockSnapshot> {
   const now = await $.clock.now()
@@ -206,7 +227,9 @@ async function refresh($: $, mem: Memory): Promise<CacheClockSnapshot> {
   for (const key of await $.store.keys()) {
     if (key.startsWith(CHAT)) {
       const value = await $.store.get(key)
-      if (isChat(value) && isListed(value, now)) chats.push(value)
+      if (!isChat(value) || !isListed(value, now)) continue
+      if (await isDeleted($, value)) await $.store.delete(key)
+      else chats.push(value)
     } else if (key.startsWith(HOLD)) {
       const until = untilOf(await $.store.get(key))
       const owner = key.slice(HOLD.length)
@@ -325,6 +348,7 @@ async function noteRequest($: $, mem: Memory, startedAt: number, used: Usage | n
   if (lifeMs === undefined) return
   // A record is this chat's own, so an app ID it saved earlier stays its own.
   const appId = (await appIdOf($, mem)) ?? before?.appId
+  const transcript = (await transcriptOf($)) ?? before?.transcript
   const chat: CacheClockChat = {
     id,
     name: mem.names[id] ?? before?.name ?? UNTITLED,
@@ -334,6 +358,7 @@ async function noteRequest($: $, mem: Memory, startedAt: number, used: Usage | n
     lifeMs,
     isRunning: await read($, runningAtom),
     ...(appId === undefined ? {} : { appId }),
+    ...(transcript === undefined ? {} : { transcript }),
   }
   await $.store.set(CHAT + id, chat)
   await refresh($, mem)
@@ -386,7 +411,7 @@ async function prune($: $): Promise<void> {
   const now = await $.clock.now()
   for (const key of await $.store.keys()) {
     const value = await $.store.get(key)
-    if (key.startsWith(CHAT) && isChat(value) && !isListed(value, now)) {
+    if (key.startsWith(CHAT) && isChat(value) && (!isListed(value, now) || (await isDeleted($, value)))) {
       await $.store.delete(key)
     } else if (key.startsWith(HOLD) && (untilOf(value) ?? 0) <= now) {
       await $.store.delete(key)

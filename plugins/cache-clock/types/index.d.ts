@@ -12,6 +12,8 @@ export type CacheClockChat = {
   isRunning: boolean
   /** The desktop app's own ID for the chat (`local_…`); absent outside the app. */
   appId?: string
+  /** The chat's conversation file; once it is gone from disk, the chat was deleted. */
+  transcript?: string
   /** When the chat's window closed or moved to another chat (ms); absent while open. */
   endedAt?: number
 }

@@ -136,3 +136,53 @@ test('pressing a name again keeps “opening…” for its own three seconds', a
   expect(await ui.find({ type: 'Text', text: 'opening…' })).toBeDefined()
   await ui.unmount()
 })
+
+test('a deleted chat leaves the list at once, even while warm', async ($, on) => {
+  const w = makeWorld(on, {
+    'chat:gone': {
+      ...cold('gone', 'Deleted but warm', 0)['chat:gone'],
+      lastAt: T0 - 10 * MIN,
+      transcript: '/t/gone.jsonl',
+    },
+    'chat:kept': {
+      ...cold('kept', 'Still here', 0)['chat:kept'],
+      lastAt: T0 - 10 * MIN,
+      transcript: '/t/kept.jsonl',
+    },
+  })
+  w.deleted.add('/t/gone.jsonl')
+  await start($)
+  await turn($, w, usage(0, 0, 400_000))
+  const shown = await names(w, $)
+  expect(shown).not.toContain('Deleted but warm')
+  expect(shown).toContain('Still here')
+  expect(w.store.has('chat:gone')).toBe(false)
+})
+
+test('a chat saves where its conversation is kept', async ($, on) => {
+  const w = makeWorld(on)
+  await start($)
+  await turn($, w, usage(0, 0, 400_000))
+  expect(w.store.get('chat:chat-a')).toMatchObject({ transcript: '/t/chat-a.jsonl' })
+})
+
+test('a chat deleted while the panel is open leaves within a second', async ($, on) => {
+  const w = makeWorld(on, {
+    'chat:gone': { ...cold('gone', 'Deleted later', 0)['chat:gone'], lastAt: T0 - 10 * MIN, transcript: '/t/gone.jsonl' },
+  })
+  await start($)
+  await turn($, w, usage(0, 0, 400_000))
+  expect(await names(w, $)).toContain('Deleted later')
+  w.deleted.add('/t/gone.jsonl')
+  await w.clock.advance(1000)
+  expect(await names(w, $)).not.toContain('Deleted later')
+})
+
+test('a run that keeps no transcript is not taken for deleted', async ($, on) => {
+  const w = makeWorld(on)
+  w.deleted.add('/t/chat-a.jsonl')
+  await start($)
+  await turn($, w, usage(0, 0, 400_000))
+  expect(w.store.get('chat:chat-a')).toBeDefined()
+  expect(w.store.get('chat:chat-a')).not.toHaveProperty('transcript')
+})
