@@ -186,3 +186,30 @@ test('a run that keeps no transcript is not taken for deleted', async ($, on) =>
   expect(w.store.get('chat:chat-a')).toBeDefined()
   expect(w.store.get('chat:chat-a')).not.toHaveProperty('transcript')
 })
+
+test('a chat whose folder this window cannot see is never taken for deleted', async ($, on) => {
+  // Another engine sharing the store, with its files somewhere this one cannot reach.
+  const w = makeWorld(on, {
+    'chat:far': { ...cold('far', 'Far away chat', 0)['chat:far'], lastAt: T0 - 10 * MIN, transcript: '/far/x.jsonl' },
+  })
+  w.deleted.add('/far')
+  w.deleted.add('/far/x.jsonl')
+  await start($)
+  await turn($, w, usage(0, 0, 400_000))
+  expect(await names(w, $)).toContain('Far away chat')
+  expect(w.store.has('chat:far')).toBe(true)
+})
+
+test('each second a deleted chat is only hidden; the record goes at the next start', async ($, on) => {
+  const w = makeWorld(on, {
+    'chat:gone': { ...cold('gone', 'Deleted later', 0)['chat:gone'], lastAt: T0 - 10 * MIN, transcript: '/t/gone.jsonl' },
+  })
+  await start($)
+  await turn($, w, usage(0, 0, 400_000))
+  w.deleted.add('/t/gone.jsonl')
+  await w.clock.advance(1000)
+  expect(await names(w, $)).not.toContain('Deleted later')
+  expect(w.store.has('chat:gone')).toBe(true)
+  await start($)
+  expect(w.store.has('chat:gone')).toBe(false)
+})

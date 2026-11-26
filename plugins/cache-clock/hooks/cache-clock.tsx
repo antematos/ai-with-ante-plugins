@@ -201,7 +201,11 @@ async function reopen($: $, id: string): Promise<void> {
 async function isDeleted($: $, chat: CacheClockChat): Promise<boolean> {
   if (chat.transcript === undefined) return false
   try {
-    return !(await $.fs.exists(chat.transcript))
+    if (await $.fs.exists(chat.transcript)) return false
+    // Only a missing file in a folder this window can see counts: an engine
+    // that shares the store but not the disk must not delete live chats.
+    const folder = chat.transcript.replace(/[\\/][^\\/]*$/, '')
+    return folder !== chat.transcript && folder !== '' && (await $.fs.exists(folder))
   } catch {
     return false
   }
@@ -228,8 +232,8 @@ async function refresh($: $, mem: Memory): Promise<CacheClockSnapshot> {
     if (key.startsWith(CHAT)) {
       const value = await $.store.get(key)
       if (!isChat(value) || !isListed(value, now)) continue
-      if (await isDeleted($, value)) await $.store.delete(key)
-      else chats.push(value)
+      // Hidden here; the record itself is removed by `prune` at the next start.
+      if (!(await isDeleted($, value))) chats.push(value)
     } else if (key.startsWith(HOLD)) {
       const until = untilOf(await $.store.get(key))
       const owner = key.slice(HOLD.length)
