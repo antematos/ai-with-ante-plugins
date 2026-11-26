@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 import { MIN, makeWorld, usage } from './world'
 import { start, turn } from './turns'
-import { repoNameOf, titleIn } from '../hooks/logic'
+import { cwdIn, repoNameOf, titleIn } from '../hooks/logic'
 
 const line = (entry: Record<string, unknown>) => JSON.stringify({ sessionId: 'chat-a', ...entry }) + '\n'
 const said = (text: string) => line({ type: 'user', message: { content: text } })
@@ -58,4 +58,70 @@ test('the project heading is the repository’s name when the folder has one', a
   await start($)
   await turn($, w, usage(0, 0, 400_000))
   expect(w.store.get('chat:chat-a')).toMatchObject({ project: 'case-library' })
+})
+
+/** Another window's warm chat, asleep, with its transcript and folder saved. */
+function asleep(w: ReturnType<typeof makeWorld>, name: string, project: string) {
+  w.store.set('chat:other', {
+    id: 'other',
+    name,
+    project,
+    size: 100_000,
+    lastAt: Date.now(),
+    lifeMs: 60 * MIN,
+    isRunning: false,
+    transcript: '/t/other.jsonl',
+    root: '/work/Database folder',
+  })
+}
+
+test('a chat renamed while asleep shows its new name, refreshed by any open chat', async ($, on) => {
+  const w = makeWorld(on)
+  await start($)
+  await turn($, w, usage(0, 0, 400_000))
+  const now = (w.store.get('chat:chat-a') as { lastAt: number }).lastAt
+  asleep(w, '🏆 Old name', 'case-library')
+  ;(w.store.get('chat:other') as { lastAt: number }).lastAt = now
+  w.files['/t/other.jsonl'] = line({ type: 'custom-title', customTitle: 'New name' })
+  await w.clock.advance(MIN / 2)
+  expect(w.store.get('chat:other')).toMatchObject({ name: 'New name' })
+})
+
+test('a sleeping chat’s project heading is corrected from its saved folder', async ($, on) => {
+  const w = makeWorld(on)
+  w.gitRemote = 'https://github.com/someone/case-library.git'
+  await start($)
+  await turn($, w, usage(0, 0, 400_000))
+  const now = (w.store.get('chat:chat-a') as { lastAt: number }).lastAt
+  asleep(w, 'Some chat', 'Database folder')
+  ;(w.store.get('chat:other') as { lastAt: number }).lastAt = now
+  await w.clock.advance(MIN / 2)
+  expect(w.store.get('chat:other')).toMatchObject({ project: 'case-library' })
+})
+
+test('a chat saves its folder, so other windows can name its project', async ($, on) => {
+  const w = makeWorld(on)
+  await start($)
+  await turn($, w, usage(0, 0, 400_000))
+  expect(w.store.get('chat:chat-a')).toHaveProperty('root')
+})
+
+test('an older record with no folder takes its repository from the transcript’s folder', async ($, on) => {
+  const w = makeWorld(on)
+  w.gitRemote = 'https://github.com/someone/case-library.git'
+  await start($)
+  await turn($, w, usage(0, 0, 400_000))
+  const now = (w.store.get('chat:chat-a') as { lastAt: number }).lastAt
+  asleep(w, 'Some chat', 'Database folder')
+  const record = w.store.get('chat:other') as Record<string, unknown>
+  delete record.root
+  record.lastAt = now
+  w.files['/t/other.jsonl'] = line({ type: 'user', cwd: '/work/Database folder/sub' })
+  await w.clock.advance(MIN / 2)
+  expect(w.store.get('chat:other')).toMatchObject({ project: 'case-library' })
+})
+
+test('the working folder: the latest a transcript records', () => {
+  expect(cwdIn(line({ cwd: '/a' }) + line({ type: 'x' }) + line({ cwd: '/b' }))).toBe('/b')
+  expect(cwdIn(line({ type: 'x' }))).toBeUndefined()
 })

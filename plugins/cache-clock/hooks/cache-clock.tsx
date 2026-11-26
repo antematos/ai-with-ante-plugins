@@ -8,6 +8,7 @@ import {
   cellsOf,
   clockText,
   colorOf,
+  cwdIn,
   holdChoicesFor,
   isListed,
   lifetimeOf,
@@ -71,6 +72,8 @@ type Memory = {
   project: string | undefined
   /** Ticks since the title was last read. */
   titleTicks: number
+  /** Project names already looked up, by folder. */
+  projects: Record<string, string>
 }
 
 // ---- the shared store -------------------------------------------------------
@@ -286,7 +289,10 @@ async function restorePane($: $, mem: Memory, isDrawn = false): Promise<void> {
 /** Once a second: redraw, warn once on red, ping a held chat before it cools. */
 async function tick($: $, mem: Memory): Promise<void> {
   mem.titleTicks += 1
-  if (mem.titleTicks >= 30) await noteOwnTitle($, mem)
+  if (mem.titleTicks >= 30) {
+    await noteOwnTitle($, mem)
+    await refreshNames($, mem)
+  }
   const snap = await refresh($, mem)
   const me = snap.me
   if (me === null) return
@@ -353,16 +359,27 @@ async function ping($: $, mem: Memory, chat: CacheClockChat): Promise<void> {
 /** The project's name as the app shows it: its git repository's name, else its folder's. */
 async function projectNameOf($: $, mem: Memory): Promise<string> {
   if (mem.project !== undefined) return mem.project
-  const root = await $.session.root()
+  mem.project = await projectAt($, mem, await $.session.root())
+  return mem.project
+}
+
+/** The project's name for folder `root`: its git repository's name, else the folder's; looked up once per folder. */
+async function projectAt($: $, mem: Memory, root: string): Promise<string> {
+  return (await repoAt($, mem, root)) ?? projectOf(root)
+}
+
+/** The git repository's name for a folder, or undefined outside one; looked up once per folder. */
+async function repoAt($: $, mem: Memory, folder: string): Promise<string | undefined> {
+  if (folder in mem.projects) return mem.projects[folder] || undefined
   let name: string | undefined
   try {
-    const run = await $.process.run(['git', '-C', root, 'remote', 'get-url', 'origin'], { timeoutMs: 5000 })
+    const run = await $.process.run(['git', '-C', folder, 'remote', 'get-url', 'origin'], { timeoutMs: 5000 })
     if (run.exitCode === 0) name = repoNameOf(run.stdout)
   } catch {
-    // No git: the folder's name.
+    // No git.
   }
-  mem.project = name ?? projectOf(root)
-  return mem.project
+  mem.projects[folder] = name ?? ''
+  return name
 }
 
 /** The most of a transcript read to find its title. */
@@ -383,15 +400,63 @@ async function noteOwnTitle($: $, mem: Memory): Promise<void> {
   mem.titleTicks = 0
   const path = await transcriptOf($)
   if (path === undefined) return
+  await noteTitle($, mem, await currentId($, mem), await titleAt($, path))
+}
+
+/** The title in transcript `path`, as the app shows it; undefined when unreadable or untitled. */
+async function titleAt($: $, path: string): Promise<string | undefined> {
   try {
     const { size } = await $.fs.stat(path)
     const from = Math.max(0, size - TITLE_TAIL)
-    let title = titleIn(await $.fs.read(path, { offset: from, length: TITLE_TAIL }))
+    const title = titleIn(await $.fs.read(path, { offset: from, length: TITLE_TAIL }))
     // The title can sit early in a long chat: then read from the start.
-    if (title === undefined && from > 0) title = titleIn(await $.fs.read(path, { offset: 0, length: Math.min(size, TITLE_MAX) }))
-    await noteTitle($, mem, await currentId($, mem), title)
+    if (title !== undefined || from === 0) return title
+    return titleIn(await $.fs.read(path, { offset: 0, length: Math.min(size, TITLE_MAX) }))
   } catch {
-    // Unreadable now; the next read tries again.
+    return undefined // unreadable now; the next read tries again
+  }
+}
+
+/** The repository a transcript's chat works in, from the folder it records; undefined outside one. */
+async function repoFromTranscript($: $, mem: Memory, path: string): Promise<string | undefined> {
+  try {
+    const { size } = await $.fs.stat(path)
+    const from = Math.max(0, size - TITLE_TAIL)
+    const cwd = cwdIn(await $.fs.read(path, { offset: from, length: TITLE_TAIL }))
+    return cwd === undefined ? undefined : await repoAt($, mem, cwd)
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Every listed chat takes its name and project as the app shows them, read
+ * from its own files: a chat asleep or closed cannot update itself. Only the
+ * name and project change, on the record as it stands just before the write.
+ */
+async function refreshNames($: $, mem: Memory): Promise<void> {
+  const now = await $.clock.now()
+  const myId = await currentId($, mem)
+  for (const key of await $.store.keys()) {
+    if (!key.startsWith(CHAT) || key === CHAT + myId) continue
+    const chat = await readChat($, key.slice(CHAT.length))
+    if (chat === undefined || !isListed(chat, now)) continue
+    const name = chat.transcript === undefined ? undefined : await titleAt($, chat.transcript)
+    // A record saved before folders were kept: the repository from the transcript's folder, if any.
+    const project =
+      chat.root !== undefined
+        ? await projectAt($, mem, chat.root)
+        : chat.transcript === undefined
+          ? undefined
+          : await repoFromTranscript($, mem, chat.transcript)
+    if ((name === undefined || name === chat.name) && (project === undefined || project === chat.project)) continue
+    const latest = await readChat($, chat.id)
+    if (latest === undefined) continue
+    await $.store.set(CHAT + chat.id, {
+      ...latest,
+      ...(name === undefined ? {} : { name }),
+      ...(project === undefined ? {} : { project }),
+    })
   }
 }
 
@@ -410,6 +475,7 @@ async function noteRequest($: $, mem: Memory, startedAt: number, used: Usage | n
     id,
     name: mem.names[id] ?? before?.name ?? UNTITLED,
     project: await projectNameOf($, mem),
+    root: await $.session.root(),
     size: sizeOf(used),
     lastAt: startedAt,
     lifeMs,
@@ -493,6 +559,7 @@ export const register: Register = on => {
     isPaneUp: false,
     project: undefined,
     titleTicks: 0,
+    projects: {},
   }
 
   on('session.start', async ($, e, next) => {

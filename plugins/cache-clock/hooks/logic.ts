@@ -220,6 +220,21 @@ export function titleIn(text: string): string | undefined {
   return custom ?? ai
 }
 
+/** The latest working folder a transcript's text records (`"cwd"`), if any. */
+export function cwdIn(text: string): string | undefined {
+  let cwd: string | undefined
+  for (const line of text.split('\n')) {
+    if (!line.includes('"cwd"')) continue
+    try {
+      const entry = JSON.parse(line) as { cwd?: unknown }
+      if (typeof entry.cwd === 'string' && entry.cwd !== '') cwd = entry.cwd
+    } catch {
+      // a line cut at the start of a partial read
+    }
+  }
+  return cwd
+}
+
 /** A repository's name from its remote address: `…/case-library.git` gives `case-library`. */
 export function repoNameOf(remote: string): string | undefined {
   const parts = remote.trim().replace(/\.git$/, '').split(/[\\/:]/).filter(part => part !== '')
