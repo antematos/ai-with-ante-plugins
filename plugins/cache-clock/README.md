@@ -65,6 +65,8 @@ Type:
 
 A panel opens beside the chat. It lists every chat on this computer that runs Cache Clock, grouped by project, the most urgent first.
 
+The panel stays open until you close it with the ×. If the app puts that chat to sleep while you are away, the panel comes back when you return to the chat.
+
 | Column | Shows |
 |---|---|
 | (bar) | How much time is left |
@@ -73,7 +75,7 @@ A panel opens beside the chat. It lists every chat on this computer that runs Ca
 | Time | Time left, the hold's end time (for example `4:30 pm`) when held, `cold`, or the Claude Code character while that chat is working |
 | Hold | Tick to hold that chat for 8 hours (45 minutes on a 5-minute cache); untick to stop |
 
-A cold chat stays in the list, greyed, for a day and then drops off.
+A cold chat stays in the list, greyed, for 4 hours and then drops off. A chat you delete drops off at once. A chat you have closed or archived drops off as soon as it goes cold.
 
 A chat's name becomes clickable once you have looked at that chat in the desktop app while it runs Cache Clock 0.2.0 or later. Some names stay plain text:
 
@@ -81,7 +83,7 @@ A chat's name becomes clickable once you have looked at that chat in the desktop
 - A chat you haven't looked at since then, including a cold chat that is no longer open. Open it once and its name becomes clickable.
 - A chat that runs in a terminal, or in the background.
 
-If a click doesn't take you to the chat, find it in the sidebar by its name.
+After a click the row reads **opening…** while the app switches; this can take a second. If it doesn't take you to the chat, find it in the sidebar by its name.
 
 ## What it costs
 
