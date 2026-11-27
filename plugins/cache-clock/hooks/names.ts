@@ -39,12 +39,13 @@ export async function projectAt($: $, repos: RepoCache, root: string): Promise<s
   return (await repoAt($, repos, root)) ?? folderName(root)
 }
 
-/** The repository a transcript's chat started in; undefined outside one or unreadable. */
-export async function repoOfTranscript($: $, repos: RepoCache, path: string): Promise<string | undefined> {
+/**
+ * The folder a transcript's chat started in, which the app groups it by; not
+ * where its shell or the engine's root moved later. Undefined when unreadable.
+ */
+export async function startFolderOf($: $, path: string): Promise<string | undefined> {
   try {
-    // The start of the transcript: where the chat began, not where its shell went.
-    const cwd = cwdIn(await $.fs.read(path, { offset: 0, length: TAIL }))
-    return cwd === undefined ? undefined : await repoAt($, repos, cwd)
+    return cwdIn(await $.fs.read(path, { offset: 0, length: TAIL }))
   } catch {
     return undefined
   }

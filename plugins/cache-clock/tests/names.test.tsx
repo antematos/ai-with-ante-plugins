@@ -160,3 +160,29 @@ test('a chat whose shell moved into another repository keeps its own project', a
   expect(await drawn($)).toContain('home')
   expect(await drawn($)).not.toContain('settings-repo')
 })
+
+test('this chat’s own heading is the folder it started in, as the app groups it', async ($, on) => {
+  const w = makeWorld(on)
+  // Started in a home folder outside any repository; the engine's root later followed the shell into a repository.
+  w.cwd = '/work/recipe-site'
+  w.gitRemotes = { '/work/recipe-site': 'https://github.com/someone/recipe-site.git' }
+  w.files['/t/chat-a.jsonl'] = line({ type: 'user', cwd: '/home/sam' }) + line({ type: 'tool', cwd: '/work/recipe-site' })
+  await start($)
+  await turn($, w, usage(0, 0, 400_000))
+  expect(w.store.get('chat:chat-a')).toMatchObject({ project: 'sam', root: '/home/sam' })
+  expect(await drawn($)).toContain('sam')
+  expect(await drawn($)).not.toContain('recipe-site')
+})
+
+test('another chat’s heading follows where it started, even when its saved folder says otherwise', async ($, on) => {
+  const w = makeWorld(on)
+  await start($)
+  await turn($, w, usage(0, 0, 400_000))
+  const now = (w.store.get('chat:chat-a') as { lastAt: number }).lastAt
+  asleep(w, 'Some chat', 'ai-plugins')
+  ;(w.store.get('chat:other') as { lastAt: number }).lastAt = now
+  w.files['/t/other.jsonl'] = line({ type: 'user', cwd: '/home/sam' })
+  await w.clock.advance(MIN / 2)
+  expect(await drawn($)).toContain('sam')
+  expect(await drawn($)).not.toContain('ai-plugins')
+})

@@ -21,7 +21,7 @@ import {
   timeOfDay,
 } from './logic'
 import type { ChatRow, Usage } from './logic'
-import { projectAt, repoOfTranscript, titleAt } from './names'
+import { projectAt, startFolderOf, titleAt } from './names'
 import type { RepoCache } from './names'
 import { hasWish, isDeleted, patchChat, prune, readChat, scan, setHold, setWish } from './records'
 
@@ -72,6 +72,8 @@ type Memory = {
   isPaneUp: boolean
   /** Repository names already looked up, by folder. */
   repos: RepoCache
+  /** The folder this chat started in, once read from its transcript. */
+  startFolder: string | undefined
   /** Other chats' names and project headings as the app shows them: drawn, never saved. */
   seen: Record<string, Partial<Pick<CacheClockChat, 'name' | 'project'>>>
 }
@@ -137,6 +139,7 @@ async function currentId($: $, mem: Memory): Promise<string> {
     const old = mem.id
     mem.id = id
     mem.warnedAt = undefined
+    mem.startFolder = undefined
     await leaveConversation($, old)
     await setHold($, id, null)
     await reopen($, id)
@@ -335,13 +338,21 @@ async function noteOwn($: $, mem: Memory): Promise<void> {
   const id = await currentId($, mem)
   const path = await transcriptOf($)
   const name = path === undefined ? undefined : await titleAt($, path)
-  const root = await $.session.root()
   await patchChat($, id, {
     seenAt: await $.clock.now(),
-    project: await projectAt($, mem.repos, root),
-    root,
+    ...(await placeOf($, mem, path)),
     ...(name === undefined ? {} : { name }),
   })
+}
+
+/**
+ * Where this chat belongs, as the app groups it: the folder it started in and
+ * that folder's project name. The engine's root can follow the work elsewhere.
+ */
+async function placeOf($: $, mem: Memory, transcript: string | undefined): Promise<{ root: string; project: string }> {
+  if (mem.startFolder === undefined && transcript !== undefined) mem.startFolder = await startFolderOf($, transcript)
+  const root = mem.startFolder ?? (await $.session.root())
+  return { root, project: await projectAt($, mem.repos, root) }
 }
 
 /**
@@ -356,13 +367,9 @@ async function readOthers($: $, mem: Memory): Promise<void> {
   for (const chat of (await scan($)).chats) {
     if (chat.id === id || !isListed(chat, now)) continue
     const name = chat.transcript === undefined ? undefined : await titleAt($, chat.transcript)
-    // A record saved before folders were kept: the repository from the transcript's folder, if any.
-    const project =
-      chat.root !== undefined
-        ? await projectAt($, mem.repos, chat.root)
-        : chat.transcript === undefined
-          ? undefined
-          : await repoOfTranscript($, mem.repos, chat.transcript)
+    // Where the chat started, as the app groups it; else the folder its record saved.
+    const folder = (chat.transcript === undefined ? undefined : await startFolderOf($, chat.transcript)) ?? chat.root
+    const project = folder === undefined ? undefined : await projectAt($, mem.repos, folder)
     seen[chat.id] = {
       ...(name === undefined ? {} : { name }),
       ...(project === undefined ? {} : { project }),
@@ -381,11 +388,9 @@ async function noteRequest($: $, mem: Memory, startedAt: number, used: Usage | n
   if (lifeMs === undefined) return
   const appId = await appIdOf($, mem)
   const transcript = await transcriptOf($)
-  const root = await $.session.root()
   await patchChat($, id, {
-    ...(before === undefined ? { name: UNTITLED } : {}),
-    project: await projectAt($, mem.repos, root),
-    root,
+    // A new record's place; after that the 30 s check-in keeps it.
+    ...(before === undefined ? { name: UNTITLED, ...(await placeOf($, mem, transcript)) } : {}),
     size: sizeOf(used),
     lastAt: startedAt,
     lifeMs,
@@ -444,6 +449,7 @@ export const register: Register = on => {
     openingTimer: undefined,
     isPaneUp: false,
     repos: {},
+    startFolder: undefined,
     seen: {},
   }
 
