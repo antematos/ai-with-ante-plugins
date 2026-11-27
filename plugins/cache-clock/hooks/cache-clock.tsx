@@ -3,6 +3,7 @@ import type { EngineInterface, Register, RenderChildren, Timer } from 'claude-co
 
 import type { CacheClockChat, CacheClockSnapshot } from '../types'
 import {
+  CHECK_IN_EVERY,
   COLOR,
   SPINNER,
   cellsOf,
@@ -20,6 +21,9 @@ import {
   timeOfDay,
 } from './logic'
 import type { ChatRow, Usage } from './logic'
+import { projectAt, startFolderOf, titleAt } from './names'
+import type { RepoCache, StartCache } from './names'
+import { hasWish, isDeleted, patchChat, prune, readChat, scan, setHold, setWish } from './records'
 
 type $ = EngineInterface
 
@@ -30,16 +34,12 @@ const choosingAtom = atom({ plugin: 'cache-clock', key: 'isChoosing' } as const,
 /** The chat whose name was just pressed, shown as opening until the app switches. */
 const openingAtom = atom({ plugin: 'cache-clock', key: 'opening' } as const, null)
 
-const CHAT = 'chat:'
-const HOLD = 'hold:'
 const PANE = 'cache-clock'
-/** `pane:<id>`: chat `id` asked for the panel and has not closed it by hand. */
-const PANE_WISH = 'pane:'
-/** A panel wish for a chat not seen this long is forgotten. */
-const WISH_FOR = 30 * 24 * 60 * 60 * 1000
 const UNTITLED = 'Untitled chat'
 /** The shape of the desktop app's chat IDs; nothing else is ever opened. */
 const APP_ID = /^local_[A-Za-z0-9-]{1,64}$/
+/** Ticks (seconds) between reads of the names on disk and check-ins. */
+const SLOW_TICKS = CHECK_IN_EVERY / 1000
 
 /** The keep-warm ping: a tiny question over the chat as last sent, read from the cache. */
 const PING =
@@ -55,37 +55,27 @@ type Memory = {
   id: string | undefined
   ticker: Timer | undefined
   spinner: Timer | undefined
+  /** A tick is redrawing: the next one waits its turn by skipping. */
+  isTicking: boolean
   isPinging: boolean
+  /** The names on disk are being read. */
+  isReading: boolean
+  /** Ticks since the names were last read. */
+  ticks: number
   /** The `lastAt` of the warm period already warned about. */
   warnedAt: number | undefined
-  names: Record<string, string>
   /** The desktop app's ID for this chat, once the app has drawn it. */
   appId: string | undefined
   /** Clears the "opening…" row; replaced by each new press. */
   openingTimer: Timer | undefined
-  /** The panel was up when last looked: its going away while this chat runs means closed by hand. */
+  /** The panel is open in this window, as far as this window knows. */
   isPaneUp: boolean
-}
-
-// ---- the shared store -------------------------------------------------------
-
-async function readChat($: $, id: string): Promise<CacheClockChat | undefined> {
-  const value = await $.store.get(CHAT + id)
-  return isChat(value) ? value : undefined
-}
-
-function isChat(value: unknown): value is CacheClockChat {
-  if (typeof value !== 'object' || value === null) return false
-  const v = value as Record<string, unknown>
-  return (
-    typeof v.id === 'string' &&
-    typeof v.name === 'string' &&
-    typeof v.project === 'string' &&
-    typeof v.size === 'number' &&
-    typeof v.lastAt === 'number' &&
-    typeof v.lifeMs === 'number' &&
-    typeof v.isRunning === 'boolean'
-  )
+  /** Repository names already looked up, by folder. */
+  repos: RepoCache
+  /** The folders chats started in, by transcript path. */
+  starts: StartCache
+  /** Other chats' names and project headings as the app shows them: drawn, never saved. */
+  seen: Record<string, Partial<Pick<CacheClockChat, 'name' | 'project'>>>
 }
 
 /**
@@ -136,27 +126,9 @@ async function openChat($: $, mem: Memory, id: string, appId: string, name: stri
   if (!isOpened) $.ui.toast(`Couldn’t open “${name}”. Find it in the sidebar.`)
 }
 
-function untilOf(value: unknown): number | undefined {
-  if (typeof value !== 'object' || value === null) return undefined
-  const until = (value as { until?: unknown }).until
-  return typeof until === 'number' ? until : undefined
-}
-
-function atOf(value: unknown): number | undefined {
-  if (typeof value !== 'object' || value === null) return undefined
-  const at = (value as { at?: unknown }).at
-  return typeof at === 'number' ? at : undefined
-}
-
-function projectOf(cwd: string): string {
-  const parts = cwd.split(/[\\/]/).filter(part => part !== '')
-  return parts[parts.length - 1] ?? cwd
-}
-
-/** Holds chat `id` until `until`, or stops its hold with null. */
-async function setHold($: $, mem: Memory, id: string, until: number | null): Promise<void> {
-  if (until === null) await $.store.delete(HOLD + id)
-  else await $.store.set(HOLD + id, { until })
+/** Holds chat `id` until `until`, or stops its hold with null, and redraws. */
+async function holdChat($: $, mem: Memory, id: string, until: number | null): Promise<void> {
+  await setHold($, id, until)
   await refresh($, mem)
 }
 
@@ -168,12 +140,12 @@ async function currentId($: $, mem: Memory): Promise<string> {
     mem.id = id
     mem.warnedAt = undefined
     await leaveConversation($, old)
-    await $.store.delete(HOLD + id)
+    await setHold($, id, null)
     await reopen($, id)
     // The panel belongs to the window: it follows the window to its new chat.
     if (mem.isPaneUp) {
-      await $.store.delete(PANE_WISH + old)
-      await $.store.set(PANE_WISH + id, { at: await $.clock.now() })
+      await setWish($, old, null)
+      await setWish($, id, await $.clock.now())
     }
   }
   mem.id = id
@@ -182,33 +154,13 @@ async function currentId($: $, mem: Memory): Promise<string> {
 
 /** A conversation this window no longer shows: its hold ends, it is not running, it is closed. */
 async function leaveConversation($: $, id: string): Promise<void> {
-  await $.store.delete(HOLD + id)
-  const chat = await readChat($, id)
-  if (chat !== undefined) {
-    await $.store.set(CHAT + id, { ...chat, isRunning: false, endedAt: await $.clock.now() })
-  }
+  await setHold($, id, null)
+  await patchChat($, id, { isRunning: false, endedAt: await $.clock.now() })
 }
 
 /** This window shows chat `id` again: its record is open. */
 async function reopen($: $, id: string): Promise<void> {
-  const chat = await readChat($, id)
-  if (chat?.endedAt === undefined) return
-  const { endedAt: _, ...open } = chat
-  await $.store.set(CHAT + id, open)
-}
-
-/** Whether chat `chat` was deleted: its conversation file is gone from disk. */
-async function isDeleted($: $, chat: CacheClockChat): Promise<boolean> {
-  if (chat.transcript === undefined) return false
-  try {
-    if (await $.fs.exists(chat.transcript)) return false
-    // Only a missing file in a folder this window can see counts: an engine
-    // that shares the store but not the disk must not delete live chats.
-    const folder = chat.transcript.replace(/[\\/][^\\/]*$/, '')
-    return folder !== chat.transcript && folder !== '' && (await $.fs.exists(folder))
-  } catch {
-    return false
-  }
+  if ((await readChat($, id))?.endedAt !== undefined) await patchChat($, id, { endedAt: undefined })
 }
 
 /** This chat's conversation file, where the engine says. */
@@ -222,24 +174,22 @@ async function transcriptOf($: $): Promise<string | undefined> {
   }
 }
 
-/** Reads every chat and hold from the store into the drawn snapshot. */
+/** Reads every listed chat and live hold into the drawn snapshot. */
 async function refresh($: $, mem: Memory): Promise<CacheClockSnapshot> {
   const now = await $.clock.now()
   const id = await currentId($, mem)
+  const found = await scan($)
   const chats: CacheClockChat[] = []
+  for (const chat of found.chats) {
+    if (!isListed(chat, now)) continue
+    // Hidden here; the record itself is removed by `prune` at the next start.
+    if (await isDeleted($, chat)) continue
+    chats.push(chat.id === id ? chat : { ...chat, ...mem.seen[chat.id] })
+  }
   const holds: Record<string, number> = {}
-  for (const key of await $.store.keys()) {
-    if (key.startsWith(CHAT)) {
-      const value = await $.store.get(key)
-      if (!isChat(value) || !isListed(value, now)) continue
-      // Hidden here; the record itself is removed by `prune` at the next start.
-      if (!(await isDeleted($, value))) chats.push(value)
-    } else if (key.startsWith(HOLD)) {
-      const until = untilOf(await $.store.get(key))
-      const owner = key.slice(HOLD.length)
-      if (until !== undefined && until > now) holds[owner] = until
-      else if (owner === id) await $.store.delete(key)
-    }
+  for (const [owner, until] of Object.entries(found.holds)) {
+    if (until > now) holds[owner] = until
+    else if (owner === id) await setHold($, id, null)
   }
   const me = chats.find(chat => chat.id === id) ?? null
   const snap: CacheClockSnapshot = { now, myId: id, me, chats, holds }
@@ -254,8 +204,7 @@ async function isPaneOpen($: $): Promise<boolean> {
 /** /cache-clock: opens the panel and remembers this chat wants it. */
 async function openPane($: $, mem: Memory): Promise<void> {
   await $.ui.open({ id: PANE, title: 'Cache Clock' })
-  const id = await currentId($, mem)
-  await $.store.set(PANE_WISH + id, { at: await $.clock.now() })
+  await setWish($, await currentId($, mem), await $.clock.now())
   mem.isPaneUp = await isPaneOpen($)
 }
 
@@ -267,39 +216,54 @@ async function restorePane($: $, mem: Memory, isDrawn = false): Promise<void> {
   // Only where the app draws this chat: a terminal resume of it gets no panel unasked.
   if (!isDrawn && !(await $.session.surfaces()).includes('desktop')) return
   const id = await currentId($, mem)
-  if ((await $.store.get(PANE_WISH + id)) === undefined) return
+  if (!(await hasWish($, id))) return
   try {
     if (!(await isPaneOpen($))) await $.ui.open({ id: PANE, title: 'Cache Clock' })
     mem.isPaneUp = await isPaneOpen($)
-    if (mem.isPaneUp) await $.store.set(PANE_WISH + id, { at: await $.clock.now() })
+    if (mem.isPaneUp) await setWish($, id, await $.clock.now())
   } catch {
     // Refused for now; the wish stays for the next start.
   }
 }
 
-/** Once a second: redraw, warn once on red, ping a held chat before it cools. */
+/**
+ * Once a second: redraw, warn once on red, ping a held chat before it cools.
+ * Every 30 s, also check in and read the names on disk, without holding up the redraw.
+ */
 async function tick($: $, mem: Memory): Promise<void> {
-  const snap = await refresh($, mem)
-  const me = snap.me
-  if (me === null) return
-  const left = me.lastAt + me.lifeMs - snap.now
-  const holdUntil = snap.holds[me.id]
-  if (holdUntil !== undefined) {
-    // A held chat is kept warm even while a long turn waits on a tool.
-    if (mem.isPinging) {
-      // A keep-warm reply is still out: wait for it before judging the chat cold.
-    } else if (left <= 0) {
-      await setHold($, mem, me.id, null)
-      $.ui.toast("This chat's cache went cold before it could be kept warm, so the hold has stopped.")
-    } else if (left <= pingLeadFor(me.lifeMs) && !mem.isPinging) {
-      await ping($, mem, me)
-    }
-    return
+  mem.ticks += 1
+  if (mem.ticks >= SLOW_TICKS) {
+    mem.ticks = 0
+    // The check-in never waits on the reads: a slow disk must not make this chat look asleep.
+    void checkIn($, mem).catch(() => {})
+    void readNames($, mem)
   }
-  if (await read($, runningAtom)) return
-  if (phaseOf(left, me.lifeMs) === 'red' && mem.warnedAt !== me.lastAt) {
-    mem.warnedAt = me.lastAt
-    $.ui.toast(`This chat's cache goes cold in ${clockText(left)}. Reply or press Hold to keep it warm.`)
+  if (mem.isTicking) return
+  mem.isTicking = true
+  try {
+    const snap = await refresh($, mem)
+    const me = snap.me
+    if (me === null) return
+    const left = me.lastAt + me.lifeMs - snap.now
+    if (snap.holds[me.id] !== undefined) {
+      // A held chat is kept warm even while a long turn waits on a tool.
+      // While a keep-warm reply is still out, wait for it before judging the chat cold.
+      if (mem.isPinging) return
+      if (left <= 0) {
+        await holdChat($, mem, me.id, null)
+        $.ui.toast("This chat's cache went cold before it could be kept warm, so the hold has stopped.")
+      } else if (left <= pingLeadFor(me.lifeMs)) {
+        void ping($, mem, me).catch(() => {})
+      }
+      return
+    }
+    if (await read($, runningAtom)) return
+    if (phaseOf(left, me.lifeMs) === 'red' && mem.warnedAt !== me.lastAt) {
+      mem.warnedAt = me.lastAt
+      $.ui.toast(`This chat's cache goes cold in ${clockText(left)}. Reply or press Hold to keep it warm.`)
+    }
+  } finally {
+    mem.isTicking = false
   }
 }
 
@@ -310,7 +274,7 @@ async function noteAppId($: $, mem: Memory, isDrawn = false): Promise<void> {
   const id = await currentId($, mem)
   const chat = await readChat($, id)
   if (chat === undefined || chat.appId === appId) return
-  await $.store.set(CHAT + id, { ...chat, appId })
+  await patchChat($, id, { appId })
   await refresh($, mem)
 }
 
@@ -319,27 +283,98 @@ async function ping($: $, mem: Memory, chat: CacheClockChat): Promise<void> {
   mem.isPinging = true
   try {
     const startedAt = await $.clock.now()
-    const reply = await $.model.fork({ prompt: PING })
+    let reply: Awaited<ReturnType<typeof $.model.fork>> | undefined
+    try {
+      reply = await $.model.fork({ prompt: PING })
+    } catch {
+      reply = undefined // no reply at all: treated as unanswered, so it is not tried every second
+    }
     if ((await $.session.id()) !== chat.id) return
-    if (!reply.isAnswered) {
-      await $.store.delete(HOLD + chat.id)
+    if (reply === undefined || !reply.isAnswered) {
+      await setHold($, chat.id, null)
       $.ui.toast('Cache Clock could not keep this chat warm, so the hold has stopped.')
       return
     }
     const used: Usage = reply.usage
     if ((used.cache_read_input_tokens ?? 0) <= (used.cache_creation_input_tokens ?? 0)) {
-      await $.store.delete(HOLD + chat.id)
+      await setHold($, chat.id, null)
       $.ui.toast('The keep-warm ping missed the cache, so the hold has stopped.')
       return
     }
-    const latest = (await readChat($, chat.id)) ?? chat
-    if (latest.lastAt > startedAt) return
+    // A request made meanwhile already moved the clock on.
+    if (((await readChat($, chat.id))?.lastAt ?? 0) > startedAt) return
     // A ping refreshes the chat's own cache: its lifetime stays as the chat's requests set it.
-    await $.store.set(CHAT + chat.id, { ...latest, lastAt: startedAt })
+    await patchChat($, chat.id, { lastAt: startedAt })
   } finally {
     mem.isPinging = false
     await refresh($, mem)
   }
+}
+
+/** This chat's window is awake: its record says when it last checked in. */
+async function checkIn($: $, mem: Memory): Promise<void> {
+  await patchChat($, await currentId($, mem), { seenAt: await $.clock.now() })
+}
+
+/** Every 30 s: this chat's record takes its name and project; other chats' names are read for drawing. */
+async function readNames($: $, mem: Memory): Promise<void> {
+  if (mem.isReading) return
+  mem.isReading = true
+  try {
+    await noteOwn($, mem)
+    await readOthers($, mem)
+    await refresh($, mem)
+  } catch {
+    // Unreadable now; the next read tries again.
+  } finally {
+    mem.isReading = false
+  }
+}
+
+/** This chat's record takes its title and project as the app shows them, and checks in as awake. */
+async function noteOwn($: $, mem: Memory): Promise<void> {
+  // The id first: a switch to another chat during the reads must not give it this chat's name.
+  const id = await currentId($, mem)
+  const path = await transcriptOf($)
+  const name = path === undefined ? undefined : await titleAt($, path)
+  await patchChat($, id, {
+    seenAt: await $.clock.now(),
+    ...(await placeOf($, mem, path)),
+    ...(name === undefined ? {} : { name }),
+  })
+}
+
+/**
+ * Where this chat belongs, as the app groups it: the folder it started in and
+ * that folder's project name. The engine's root can follow the work elsewhere.
+ */
+async function placeOf($: $, mem: Memory, transcript: string | undefined): Promise<{ root: string; project: string }> {
+  const start = transcript === undefined ? undefined : await startFolderOf($, mem.starts, transcript)
+  const root = start ?? (await $.session.root())
+  return { root, project: await projectAt($, mem.repos, root) }
+}
+
+/**
+ * Other listed chats' names and projects as the app shows them, read from
+ * their own files: a chat asleep cannot update its record. Kept for drawing
+ * only; each record is written by its own chat alone.
+ */
+async function readOthers($: $, mem: Memory): Promise<void> {
+  const now = await $.clock.now()
+  const id = await currentId($, mem)
+  const seen: Memory['seen'] = {}
+  for (const chat of (await scan($)).chats) {
+    if (chat.id === id || !isListed(chat, now)) continue
+    const name = chat.transcript === undefined ? undefined : await titleAt($, chat.transcript)
+    // Where the chat started, as the app groups it; else the folder its record saved.
+    const folder = (chat.transcript === undefined ? undefined : await startFolderOf($, mem.starts, chat.transcript)) ?? chat.root
+    const project = folder === undefined ? undefined : await projectAt($, mem.repos, folder)
+    seen[chat.id] = {
+      ...(name === undefined ? {} : { name }),
+      ...(project === undefined ? {} : { project }),
+    }
+  }
+  mem.seen = seen
 }
 
 // ---- the main thread's requests and turns -----------------------------------
@@ -350,21 +385,22 @@ async function noteRequest($: $, mem: Memory, startedAt: number, used: Usage | n
   const before = await readChat($, id)
   const lifeMs = lifetimeOf(used, before?.lifeMs)
   if (lifeMs === undefined) return
-  // A record is this chat's own, so an app ID it saved earlier stays its own.
-  const appId = (await appIdOf($, mem)) ?? before?.appId
-  const transcript = (await transcriptOf($)) ?? before?.transcript
-  const chat: CacheClockChat = {
-    id,
-    name: mem.names[id] ?? before?.name ?? UNTITLED,
-    project: projectOf(await $.session.root()),
+  const appId = await appIdOf($, mem)
+  const transcript = await transcriptOf($)
+  await patchChat($, id, {
+    // A new record's place; after that the 30 s check-in keeps it.
+    ...(before === undefined ? { name: UNTITLED, ...(await placeOf($, mem, transcript)) } : {}),
     size: sizeOf(used),
     lastAt: startedAt,
     lifeMs,
     isRunning: await read($, runningAtom),
+    seenAt: await $.clock.now(),
+    // A chat making requests is open.
+    endedAt: undefined,
+    // A record is this chat's own, so an app ID or transcript it saved earlier stays its own.
     ...(appId === undefined ? {} : { appId }),
     ...(transcript === undefined ? {} : { transcript }),
-  }
-  await $.store.set(CHAT + id, chat)
+  })
   await refresh($, mem)
 }
 
@@ -376,22 +412,8 @@ async function setRunning($: $, mem: Memory, isRunning: boolean): Promise<void> 
   if (isRunning) {
     mem.spinner = $.clock.every(150, () => void update($, frameAtom, frame => (frame + 1) % SPINNER.length))
   }
-  const id = await currentId($, mem)
-  const chat = await readChat($, id)
-  if (chat !== undefined && chat.isRunning !== isRunning) {
-    await $.store.set(CHAT + id, { ...chat, isRunning })
-  }
+  await patchChat($, await currentId($, mem), { isRunning, seenAt: await $.clock.now() })
   await refresh($, mem)
-}
-
-/** The chat's title as Claude Code names it. */
-async function noteTitle($: $, mem: Memory, id: string, title: string | undefined): Promise<void> {
-  if (title === undefined || title.trim() === '') return
-  mem.names[id] = title.trim()
-  const chat = await readChat($, id)
-  if (chat !== undefined && chat.name !== mem.names[id]) {
-    await $.store.set(CHAT + id, { ...chat, name: mem.names[id] })
-  }
 }
 
 /** /keep-warm: toggles the hold on this chat. */
@@ -399,30 +421,15 @@ async function keepWarm($: $, mem: Memory): Promise<string> {
   const snap = await refresh($, mem)
   const me = snap.me
   if (snap.holds[snap.myId] !== undefined) {
-    await setHold($, mem, snap.myId, null)
+    await holdChat($, mem, snap.myId, null)
     return 'Hold stopped.'
   }
   if (me === null || me.lastAt + me.lifeMs <= snap.now) {
     return 'This chat has no warm cache to hold.'
   }
   const until = snap.now + quickHoldFor(me.lifeMs)
-  await setHold($, mem, me.id, until)
+  await holdChat($, mem, me.id, until)
   return `Keeping this chat warm until ${timeOfDay(until)}.`
-}
-
-/** Removes chats the panel no longer lists, and holds past their end. */
-async function prune($: $): Promise<void> {
-  const now = await $.clock.now()
-  for (const key of await $.store.keys()) {
-    const value = await $.store.get(key)
-    if (key.startsWith(CHAT) && isChat(value) && (!isListed(value, now) || (await isDeleted($, value)))) {
-      await $.store.delete(key)
-    } else if (key.startsWith(HOLD) && (untilOf(value) ?? 0) <= now) {
-      await $.store.delete(key)
-    } else if (key.startsWith(PANE_WISH) && (atOf(value) ?? 0) + WISH_FOR <= now) {
-      await $.store.delete(key)
-    }
-  }
 }
 
 // ---- the module ---------------------------------------------------------------
@@ -432,20 +439,25 @@ export const register: Register = on => {
     id: undefined,
     ticker: undefined,
     spinner: undefined,
+    isTicking: false,
     isPinging: false,
+    isReading: false,
+    ticks: 0,
     warnedAt: undefined,
-    names: {},
     appId: undefined,
     openingTimer: undefined,
     isPaneUp: false,
+    repos: {},
+    starts: {},
+    seen: {},
   }
 
   on('session.start', async ($, e, next) => {
     const id = await $.session.id()
     mem.id = id
-    await $.store.delete(HOLD + id)
+    await setHold($, id, null)
     await reopen($, id)
-    await prune($)
+    await prune($, await $.clock.now())
     await $.command.register({ name: 'cache-clock', description: 'Show how long each chat stays warm' })
     await $.command.register({ name: 'keep-warm', description: 'Hold this chat warm, or stop the hold' })
     mem.ticker?.cancel()
@@ -453,6 +465,7 @@ export const register: Register = on => {
     await refresh($, mem)
     await noteAppId($, mem)
     await restorePane($, mem)
+    await readNames($, mem)
     return next(e)
   })
 
@@ -460,6 +473,7 @@ export const register: Register = on => {
   on('session.attach', { surface: 'desktop' }, async ($, e, next) => {
     await noteAppId($, mem, true)
     await restorePane($, mem, true)
+    await readNames($, mem)
     return next(e)
   }).catch(($, e, next) => next(e))
 
@@ -468,7 +482,7 @@ export const register: Register = on => {
   on('ui.close', async ($, e, next) => {
     if (e.id === PANE && e.origin.kind === 'person') {
       mem.isPaneUp = false
-      await $.store.delete(PANE_WISH + (await currentId($, mem)))
+      await setWish($, await currentId($, mem), null)
     }
     return next(e)
   }).catch(($, e, next) => next(e))
@@ -478,16 +492,6 @@ export const register: Register = on => {
     await update($, choosingAtom, () => false)
     return next(e)
   })
-
-  on('classic.SessionStart', async ($, e, next) => {
-    await noteTitle($, mem, e.session_id, e.session_title)
-    return next(e)
-  }).catch(($, e, next) => next(e))
-
-  on('classic.UserPromptSubmit', async ($, e, next) => {
-    await noteTitle($, mem, e.session_id, e.session_title)
-    return next(e)
-  }).catch(($, e, next) => next(e))
 
   on('prompt.submit', async ($, e, next) => {
     await update($, choosingAtom, () => false)
@@ -507,7 +511,10 @@ export const register: Register = on => {
   })
 
   on('turn.complete', async ($, e, next) => {
-    if (e.agentId === undefined) await setRunning($, mem, false)
+    if (e.agentId === undefined) {
+      await setRunning($, mem, false)
+      await readNames($, mem)
+    }
     return next(e)
   })
 
@@ -541,7 +548,7 @@ export const register: Register = on => {
     if (holdUntil !== undefined) {
       return (
         <Box flexDirection="row" gap={1}>
-          <Button key="held" onPress={() => setHold($, mem, me.id, null)}>
+          <Button key="held" onPress={() => holdChat($, mem, me.id, null)}>
             Held
           </Button>
           <Text color={COLOR.green}>to {timeOfDay(holdUntil)}</Text>
@@ -587,7 +594,7 @@ export const register: Register = on => {
             key={choice.key}
             onPress={async () => {
               await close()
-              await setHold($, mem, me.id, (await $.clock.now()) + choice.ms)
+              await holdChat($, mem, me.id, (await $.clock.now()) + choice.ms)
             }}
           >
             {choice.label}
@@ -698,12 +705,13 @@ export const register: Register = on => {
       }
       const isHeld = r.kind === 'held'
       const phase = phaseOf(r.leftMs, chat.lifeMs)
-      const tickBox = (
+      // Only an awake window can keep its chat warm, so a sleeping chat offers no hold.
+      const tickBox = r.canHold && (
         <Button
           key={`hold:${chat.id}`}
           plain
           onPress={async () =>
-            setHold($, mem, chat.id, isHeld ? null : (await $.clock.now()) + quickHoldFor(chat.lifeMs))
+            holdChat($, mem, chat.id, isHeld ? null : (await $.clock.now()) + quickHoldFor(chat.lifeMs))
           }
         >
           {isHeld ? <Text color={COLOR.tick}>☑</Text> : <Text>☐</Text>}

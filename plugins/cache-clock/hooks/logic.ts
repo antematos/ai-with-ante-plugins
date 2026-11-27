@@ -10,9 +10,9 @@ export type Usage = {
   ephemeral_1h_input_tokens?: number
 }
 
-export const MINUTE = 60_000
-export const HOUR = 60 * MINUTE
-export const FIVE_MINUTES = 5 * MINUTE
+const MINUTE = 60_000
+const HOUR = 60 * MINUTE
+const FIVE_MINUTES = 5 * MINUTE
 
 export const COLOR = {
   green: '#16a34a',
@@ -132,7 +132,25 @@ export function pingLeadFor(lifeMs: number): number {
 export const SPINNER = ['·', '✢', '✳', '✶', '✻', '✽', '✻', '✶', '✳', '✢'] as const
 
 /** A listed chat drops off this long after going cold. */
-export const DROP_AFTER = 4 * HOUR
+const DROP_AFTER = 4 * HOUR
+
+/** How often an open window marks its chat as awake. */
+export const CHECK_IN_EVERY = 30_000
+/** A chat whose window has not checked in for this long is asleep. */
+const ASLEEP_AFTER = 2 * MINUTE
+
+/**
+ * Whether the chat's window checked in lately. Only an awake window can keep
+ * its chat warm or still be running a reply; the app shuts idle chats down.
+ */
+export function isAwake(chat: CacheClockChat, now: number): boolean {
+  return chat.seenAt !== undefined && now - chat.seenAt < ASLEEP_AFTER
+}
+
+/** Running a reply now: said so, and its window is still awake to say otherwise. */
+export function isWorking(chat: CacheClockChat, now: number): boolean {
+  return chat.isRunning && isAwake(chat, now)
+}
 
 /**
  * Whether the panel still lists a chat: until four hours after it went cold,
@@ -140,7 +158,7 @@ export const DROP_AFTER = 4 * HOUR
  */
 export function isListed(chat: CacheClockChat, now: number): boolean {
   const coldAt = chat.lastAt + chat.lifeMs
-  if (chat.endedAt !== undefined && coldAt <= now && !chat.isRunning) return false
+  if (chat.endedAt !== undefined && coldAt <= now && !isWorking(chat, now)) return false
   return coldAt + DROP_AFTER > now
 }
 
@@ -149,6 +167,8 @@ export type ChatRow = {
   kind: 'warm' | 'held' | 'running' | 'cold'
   leftMs: number
   holdUntil?: number
+  /** Its window is awake, so a hold on it can be kept. */
+  canHold: boolean
 }
 
 export type ProjectGroup = { project: string; rows: ChatRow[] }
@@ -169,15 +189,17 @@ export function orderChats(
     if (seen.has(chat.id)) continue
     seen.add(chat.id)
     const leftMs = chat.lastAt + chat.lifeMs - now
-    const holdUntil = holds[chat.id]
-    if (chat.isRunning) {
-      rows.push({ row: { chat, kind: 'running', leftMs }, rank: 1, key: 0 })
+    const canHold = isAwake(chat, now)
+    // A sleeping window cannot ping, so its hold keeps nothing warm.
+    const holdUntil = canHold ? holds[chat.id] : undefined
+    if (isWorking(chat, now)) {
+      rows.push({ row: { chat, kind: 'running', leftMs, canHold }, rank: 1, key: 0 })
     } else if (leftMs <= 0) {
-      rows.push({ row: { chat, kind: 'cold', leftMs }, rank: 2, key: -(chat.lastAt + chat.lifeMs) })
-    } else if (holdUntil !== undefined) {
-      rows.push({ row: { chat, kind: 'held', leftMs, holdUntil }, rank: 0, key: holdUntil - now })
+      rows.push({ row: { chat, kind: 'cold', leftMs, canHold }, rank: 2, key: -(chat.lastAt + chat.lifeMs) })
+    } else if (holdUntil !== undefined && holdUntil > now) {
+      rows.push({ row: { chat, kind: 'held', leftMs, holdUntil, canHold }, rank: 0, key: holdUntil - now })
     } else {
-      rows.push({ row: { chat, kind: 'warm', leftMs }, rank: 0, key: leftMs })
+      rows.push({ row: { chat, kind: 'warm', leftMs, canHold }, rank: 0, key: leftMs })
     }
   }
   rows.sort((a, b) => a.rank - b.rank || a.key - b.key)
@@ -191,4 +213,54 @@ export function orderChats(
     group.rows.push(row)
   }
   return groups
+}
+
+/**
+ * The chat's title as the app shows it, from its transcript's text: the
+ * latest name the person gave (`custom-title`), else the latest the app gave
+ * (`ai-title`). Undefined when the text holds neither.
+ */
+export function titleIn(text: string): string | undefined {
+  let custom: string | undefined
+  let ai: string | undefined
+  for (const line of text.split('\n')) {
+    if (!line.includes('-title"')) continue
+    let entry: unknown
+    try {
+      entry = JSON.parse(line)
+    } catch {
+      continue // a line cut at the start of a partial read
+    }
+    if (typeof entry !== 'object' || entry === null) continue
+    const e = entry as { type?: unknown; customTitle?: unknown; aiTitle?: unknown }
+    if (e.type === 'custom-title' && typeof e.customTitle === 'string' && e.customTitle.trim() !== '') {
+      custom = e.customTitle.trim()
+    } else if (e.type === 'ai-title' && typeof e.aiTitle === 'string' && e.aiTitle.trim() !== '') {
+      ai = e.aiTitle.trim()
+    }
+  }
+  return custom ?? ai
+}
+
+/**
+ * The folder a chat started in: the first working folder its transcript's
+ * text records (`"cwd"`). Later entries follow the shell wherever it moved.
+ */
+export function cwdIn(text: string): string | undefined {
+  for (const line of text.split('\n')) {
+    if (!line.includes('"cwd"')) continue
+    try {
+      const entry = JSON.parse(line) as { cwd?: unknown }
+      if (typeof entry.cwd === 'string' && entry.cwd !== '') return entry.cwd
+    } catch {
+      // a line cut at the end of a partial read
+    }
+  }
+  return undefined
+}
+
+/** A repository's name from its remote address: `…/case-library.git` gives `case-library`. */
+export function repoNameOf(remote: string): string | undefined {
+  const parts = remote.trim().replace(/\.git$/, '').split(/[\\/:]/).filter(part => part !== '')
+  return parts[parts.length - 1]
 }

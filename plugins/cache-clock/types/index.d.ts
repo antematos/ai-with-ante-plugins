@@ -1,4 +1,7 @@
-/** One chat's record, saved under `chat:<id>` by that chat alone. */
+/**
+ * One chat's record under `chat:<id>`. Only the chat's own window writes it;
+ * other windows read it, and any window may remove it once it is no longer listed.
+ */
 export type CacheClockChat = {
   id: string
   name: string
@@ -12,10 +15,14 @@ export type CacheClockChat = {
   isRunning: boolean
   /** The desktop app's own ID for the chat (`local_…`); absent outside the app. */
   appId?: string
+  /** The folder the chat works in, so any window can name its project. */
+  root?: string
   /** The chat's conversation file; once it is gone from disk, the chat was deleted. */
   transcript?: string
   /** When the chat's window closed or moved to another chat (ms); absent while open. */
   endedAt?: number
+  /** When the chat's window last checked in (ms), about every 30 s while it is awake. */
+  seenAt?: number
 }
 
 /** What the drawings read, refreshed every second. */
