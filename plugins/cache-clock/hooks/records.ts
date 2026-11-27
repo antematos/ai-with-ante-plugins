@@ -58,12 +58,26 @@ export async function patchChat(
   id: string,
   fields: Partial<CacheClockChat>,
 ): Promise<CacheClockChat | undefined> {
-  const next: Record<string, unknown> = { ...((await readChat($, id)) ?? {}), ...fields, id }
-  for (const key of Object.keys(next)) if (next[key] === undefined) delete next[key]
-  if (!isChat(next)) return undefined
-  await $.store.set(CHAT + id, next)
-  return next
+  // Saves to one record wait their turn, so one never puts back what another just changed.
+  const before = saving.get(id) ?? Promise.resolve()
+  let done = () => {}
+  const mine = new Promise<void>(resolve => (done = resolve))
+  saving.set(id, mine)
+  try {
+    await before
+    const next: Record<string, unknown> = { ...((await readChat($, id)) ?? {}), ...fields, id }
+    for (const key of Object.keys(next)) if (next[key] === undefined) delete next[key]
+    if (!isChat(next)) return undefined
+    await $.store.set(CHAT + id, next)
+    return next
+  } finally {
+    done()
+    if (saving.get(id) === mine) saving.delete(id)
+  }
 }
+
+/** The save to each record now under way, by chat id. */
+const saving = new Map<string, Promise<void>>()
 
 /** Every chat record and hold, in one pass over the store. */
 export async function scan($: $): Promise<Scan> {

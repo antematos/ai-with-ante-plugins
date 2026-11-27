@@ -20,6 +20,8 @@ export type World = {
   forkUsage: TurnUsage | null
   /** When true, a keep-warm ping waits for `releaseFork()` before it answers. */
   isForkHeld: boolean
+  /** When true, a keep-warm ping fails outright instead of answering. */
+  isForkBroken: boolean
   releaseFork: () => void
   id: string
   cwd: string
@@ -68,6 +70,7 @@ export function makeWorld(on: On, start: Record<string, unknown> = {}): World {
     usage: null,
     forkUsage: null,
     isForkHeld: false,
+    isForkBroken: false,
     releaseFork: () => {},
     id: 'chat-a',
     cwd: '/work/garden-notes',
@@ -152,6 +155,7 @@ export function makeWorld(on: On, start: Record<string, unknown> = {}): World {
     w.forks.push(e.prompt)
     w.forkEfforts.push(e.effort)
     if (w.isForkHeld) await new Promise<void>(resolve => (w.releaseFork = resolve))
+    if (w.isForkBroken) throw new Error('no reply')
     if (w.forkUsage === null) {
       return { value: { isAnswered: false, reason: 'empty-reply', usage: usage(0, 0, 0, 0) } }
     }

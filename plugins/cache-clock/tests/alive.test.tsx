@@ -132,3 +132,14 @@ test('a save changes only its own fields: what another window wrote meanwhile st
   expect(after.appId).toBe('local_other-window')
   expect(after.lastAt).toBeGreaterThan(T0)
 })
+
+test('a keep-warm ping that fails outright stops the hold once, not every second', async ($, on) => {
+  const w = makeWorld(on)
+  await start($)
+  await turn($, w, usage(0, 0, 400_000, 1000))
+  w.isForkBroken = true
+  await $.command.run({ command: 'keep-warm', args: '', origin: { kind: 'composer' } as never, presentation: {} as never })
+  await w.clock.advance(4 * MIN + 45_000)
+  expect(w.forks).toHaveLength(1)
+  expect(w.store.has('hold:chat-a')).toBe(false)
+})

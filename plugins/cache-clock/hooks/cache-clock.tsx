@@ -230,7 +230,12 @@ async function restorePane($: $, mem: Memory, isDrawn = false): Promise<void> {
  */
 async function tick($: $, mem: Memory): Promise<void> {
   mem.ticks += 1
-  if (mem.ticks >= SLOW_TICKS) void readNames($, mem)
+  if (mem.ticks >= SLOW_TICKS) {
+    mem.ticks = 0
+    // The check-in never waits on the reads: a slow disk must not make this chat look asleep.
+    void checkIn($, mem).catch(() => {})
+    void readNames($, mem)
+  }
   if (mem.isTicking) return
   mem.isTicking = true
   try {
@@ -246,7 +251,7 @@ async function tick($: $, mem: Memory): Promise<void> {
         await holdChat($, mem, me.id, null)
         $.ui.toast("This chat's cache went cold before it could be kept warm, so the hold has stopped.")
       } else if (left <= pingLeadFor(me.lifeMs)) {
-        void ping($, mem, me)
+        void ping($, mem, me).catch(() => {})
       }
       return
     }
@@ -276,9 +281,14 @@ async function ping($: $, mem: Memory, chat: CacheClockChat): Promise<void> {
   mem.isPinging = true
   try {
     const startedAt = await $.clock.now()
-    const reply = await $.model.fork({ prompt: PING })
+    let reply: Awaited<ReturnType<typeof $.model.fork>> | undefined
+    try {
+      reply = await $.model.fork({ prompt: PING })
+    } catch {
+      reply = undefined // no reply at all: treated as unanswered, so it is not tried every second
+    }
     if ((await $.session.id()) !== chat.id) return
-    if (!reply.isAnswered) {
+    if (reply === undefined || !reply.isAnswered) {
       await setHold($, chat.id, null)
       $.ui.toast('Cache Clock could not keep this chat warm, so the hold has stopped.')
       return
@@ -299,7 +309,12 @@ async function ping($: $, mem: Memory, chat: CacheClockChat): Promise<void> {
   }
 }
 
-/** Every 30 s: this chat checks in with its name and project; other chats' names are read for drawing. */
+/** This chat's window is awake: its record says when it last checked in. */
+async function checkIn($: $, mem: Memory): Promise<void> {
+  await patchChat($, await currentId($, mem), { seenAt: await $.clock.now() })
+}
+
+/** Every 30 s: this chat's record takes its name and project; other chats' names are read for drawing. */
 async function readNames($: $, mem: Memory): Promise<void> {
   if (mem.isReading) return
   mem.isReading = true
@@ -316,11 +331,12 @@ async function readNames($: $, mem: Memory): Promise<void> {
 
 /** This chat's record takes its title and project as the app shows them, and checks in as awake. */
 async function noteOwn($: $, mem: Memory): Promise<void> {
-  mem.ticks = 0
+  // The id first: a switch to another chat during the reads must not give it this chat's name.
+  const id = await currentId($, mem)
   const path = await transcriptOf($)
   const name = path === undefined ? undefined : await titleAt($, path)
   const root = await $.session.root()
-  await patchChat($, await currentId($, mem), {
+  await patchChat($, id, {
     seenAt: await $.clock.now(),
     project: await projectAt($, mem.repos, root),
     root,
