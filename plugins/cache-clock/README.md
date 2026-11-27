@@ -127,7 +127,7 @@ Prices checked 23 Nov 2026 on [Anthropic's pricing page](https://platform.claude
 ## Works on
 
 - Windows: supported.
-- macOS: tested (install, bar and panel).
+- macOS: tested.
 
 The bar beside the model name shows in the desktop app. The panel works in the desktop app and the terminal. Clicking a name to go to a chat works in the desktop app only.
 
