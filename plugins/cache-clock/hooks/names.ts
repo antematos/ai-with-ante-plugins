@@ -8,6 +8,8 @@ type $ = EngineInterface
 
 /** Repository names already looked up, by folder; '' for a folder outside any repository. */
 export type RepoCache = Record<string, string>
+/** Start folders already found, by transcript path; a chat's start never changes. */
+export type StartCache = Record<string, string>
 
 /** How much of a transcript's end is read for its title; its start, for its folder. */
 const TAIL = 256 * 1024
@@ -43,11 +45,19 @@ export async function projectAt($: $, repos: RepoCache, root: string): Promise<s
  * The folder a transcript's chat started in, which the app groups it by; not
  * where its shell or the engine's root moved later. Undefined when unreadable.
  */
-export async function startFolderOf($: $, path: string): Promise<string | undefined> {
+export async function startFolderOf($: $, starts: StartCache, path: string): Promise<string | undefined> {
+  if (path in starts) return starts[path]
   try {
-    return cwdIn(await $.fs.read(path, { offset: 0, length: TAIL }))
+    // Usually in the first lines; a long first message can push it further in.
+    let folder = cwdIn(await $.fs.read(path, { offset: 0, length: TAIL }))
+    if (folder === undefined) {
+      const { size } = await $.fs.stat(path)
+      if (size > TAIL) folder = cwdIn(await $.fs.read(path, { offset: 0, length: Math.min(size, MOST) }))
+    }
+    if (folder !== undefined) starts[path] = folder
+    return folder
   } catch {
-    return undefined
+    return undefined // unreadable now, or no folder recorded yet: asked again next time
   }
 }
 

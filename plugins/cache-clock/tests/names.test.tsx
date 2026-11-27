@@ -186,3 +186,25 @@ test('another chat’s heading follows where it started, even when its saved fol
   expect(await drawn($)).toContain('sam')
   expect(await drawn($)).not.toContain('ai-plugins')
 })
+
+test('the start folder is found even behind a very long first message', async ($, on) => {
+  const w = makeWorld(on)
+  w.cwd = '/work/recipe-site'
+  w.files['/t/chat-a.jsonl'] = line({ type: 'user', content: 'x'.repeat(300_000) }) + line({ type: 'user', cwd: '/home/sam' })
+  await start($)
+  await turn($, w, usage(0, 0, 400_000))
+  expect(w.store.get('chat:chat-a')).toMatchObject({ project: 'sam', root: '/home/sam' })
+})
+
+test('a window that starts another chat takes that chat’s own start folder', async ($, on) => {
+  const w = makeWorld(on)
+  w.files['/t/chat-a.jsonl'] = line({ type: 'user', cwd: '/home/sam' })
+  w.files['/t/chat-b.jsonl'] = line({ type: 'user', cwd: '/work/recipe-site' })
+  await start($)
+  await turn($, w, usage(0, 0, 400_000))
+  await $.session.end({ sessionId: 'chat-a', reason: 'clear' } as never)
+  w.id = 'chat-b'
+  await start($)
+  await turn($, w, usage(0, 0, 400_000))
+  expect(w.store.get('chat:chat-b')).toMatchObject({ project: 'recipe-site', root: '/work/recipe-site' })
+})
