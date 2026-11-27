@@ -8,16 +8,18 @@ The steps are the same on Mac and Windows. Pick the way you use Claude Code.
 
 ### In the desktop app
 
-1. In any Claude Code chat, type `/plugin` and press Enter. The Plugins screen opens.
+1. In the Claude desktop app, click **Plugins** in the left sidebar.
 2. Click **Add** (top right), then **Add marketplace**.
-3. Click **Add from a repository**, paste this link, and confirm:
+3. Click **Add from a repository**.
+4. In the **URL** box, paste this, then click **Sync**:
 
    ```
-   https://github.com/antematos/ai-with-ante-plugins
+   antematos/ai-with-ante-plugins
    ```
 
-4. Find **Cache Clock** in the list and click **Install**.
-5. Quit Claude completely and open it again.
+5. **Cache clock** appears in the list. Click its **+** button.
+6. A note says the add-on runs code on your computer. That's how it reads the clock. Click **Continue**.
+7. Quit Claude completely and open it again. The clock appears after Claude's first reply in a chat. Type `/cache-clock` to open the panel.
 
 ### In a terminal
 
@@ -125,7 +127,7 @@ Prices checked 23 Nov 2026 on [Anthropic's pricing page](https://platform.claude
 ## Works on
 
 - Windows: supported.
-- macOS: untested so far.
+- macOS: tested (install, bar and panel).
 
 The bar beside the model name shows in the desktop app. The panel works in the desktop app and the terminal. Clicking a name to go to a chat works in the desktop app only.
 
