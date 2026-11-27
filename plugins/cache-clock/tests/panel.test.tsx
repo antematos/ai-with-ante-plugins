@@ -33,6 +33,8 @@ function chat(id: string, name: string, project: string, lastAgo: number, lifeMs
     lastAt: T0 - lastAgo,
     lifeMs,
     isRunning: false,
+    // Each window checked in just as the panel opens (see `openPanel`).
+    seenAt: T0 + 4 * MIN,
     ...extra,
   }
 }

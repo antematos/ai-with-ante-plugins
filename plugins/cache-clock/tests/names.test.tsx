@@ -3,6 +3,22 @@ import { MIN, makeWorld, usage } from './world'
 import { start, turn } from './turns'
 import { cwdIn, repoNameOf, titleIn } from '../hooks/logic'
 
+const pane = {
+  plugin: 'cache-clock',
+  surface: 'desktop',
+  component: 'Pane',
+  requestId: 'cache-clock',
+  props: { title: 'Cache Clock', isFocused: false, bodyColumns: 100, placement: 'dock', scroll: { offset: 0, bodyRows: 30 }, view: {} },
+} as const
+
+/** Every text the panel draws. */
+async function drawn($: Parameters<Parameters<typeof test>[1]>[0]): Promise<string[]> {
+  const ui = await $.ui.mount(pane)
+  const all = (await ui.findAll({ type: 'Text' })).map(t => t.text)
+  await ui.unmount()
+  return all
+}
+
 const line = (entry: Record<string, unknown>) => JSON.stringify({ sessionId: 'chat-a', ...entry }) + '\n'
 const said = (text: string) => line({ type: 'user', message: { content: text } })
 const aiTitle = (title: string) => line({ type: 'ai-title', aiTitle: title })
@@ -75,7 +91,7 @@ function asleep(w: ReturnType<typeof makeWorld>, name: string, project: string) 
   })
 }
 
-test('a chat renamed while asleep shows its new name, refreshed by any open chat', async ($, on) => {
+test('a chat renamed while asleep shows its new name in any open window, its record untouched', async ($, on) => {
   const w = makeWorld(on)
   await start($)
   await turn($, w, usage(0, 0, 400_000))
@@ -84,7 +100,8 @@ test('a chat renamed while asleep shows its new name, refreshed by any open chat
   ;(w.store.get('chat:other') as { lastAt: number }).lastAt = now
   w.files['/t/other.jsonl'] = line({ type: 'custom-title', customTitle: 'New name' })
   await w.clock.advance(MIN / 2)
-  expect(w.store.get('chat:other')).toMatchObject({ name: 'New name' })
+  expect(await drawn($)).toContain('New name')
+  expect(w.store.get('chat:other')).toMatchObject({ name: '🏆 Old name' })
 })
 
 test('a sleeping chat’s project heading is corrected from its saved folder', async ($, on) => {
@@ -96,7 +113,8 @@ test('a sleeping chat’s project heading is corrected from its saved folder', a
   asleep(w, 'Some chat', 'Database folder')
   ;(w.store.get('chat:other') as { lastAt: number }).lastAt = now
   await w.clock.advance(MIN / 2)
-  expect(w.store.get('chat:other')).toMatchObject({ project: 'case-library' })
+  expect(await drawn($)).not.toContain('Database folder')
+  expect(await drawn($)).toContain('case-library')
 })
 
 test('a chat saves its folder, so other windows can name its project', async ($, on) => {
@@ -118,7 +136,7 @@ test('an older record with no folder takes its repository from the transcript’
   record.lastAt = now
   w.files['/t/other.jsonl'] = line({ type: 'user', cwd: '/work/Database folder/sub' })
   await w.clock.advance(MIN / 2)
-  expect(w.store.get('chat:other')).toMatchObject({ project: 'case-library' })
+  expect(await drawn($)).not.toContain('Database folder')
 })
 
 test('the working folder: the first a transcript records, where the chat started', () => {
@@ -139,5 +157,6 @@ test('a chat whose shell moved into another repository keeps its own project', a
   record.lastAt = now
   w.files['/t/other.jsonl'] = line({ type: 'user', cwd: '/work/home' }) + line({ type: 'tool', cwd: '/work/home/config' })
   await w.clock.advance(MIN / 2)
-  expect(w.store.get('chat:other')).toMatchObject({ project: 'home' })
+  expect(await drawn($)).toContain('home')
+  expect(await drawn($)).not.toContain('settings-repo')
 })

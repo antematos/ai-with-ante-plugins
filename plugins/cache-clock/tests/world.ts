@@ -91,13 +91,15 @@ export function makeWorld(on: On, start: Record<string, unknown> = {}): World {
   })
   // The engine hands the path on in the machine's own spelling (a drive and backslashes on Windows).
   const plain = (path: string) => path.replace(/^[A-Za-z]:/, '').replace(/\\/g, '/')
+  /** A file's text: what the test gave, else empty for any file not deleted, so exists, stat and read agree. */
+  const textOf = (path: string) => w.files[plain(path)] ?? (w.deleted.has(plain(path)) ? undefined : '')
   on('fs.stat', (_, e) => {
-    const text = w.files[plain(e.path)]
+    const text = textOf(e.path)
     if (text === undefined) throw new Error('missing')
     return { value: { kind: 'file', size: text.length, mtimeMs: 0, isLink: false } }
   })
   on('fs.read', (_, e) => {
-    const text = w.files[plain(e.path)]
+    const text = textOf(e.path)
     if (text === undefined) throw new Error('missing')
     const from = e.offset ?? 0
     return { value: text.slice(from, e.length === undefined ? undefined : from + e.length) }

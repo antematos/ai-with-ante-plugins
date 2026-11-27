@@ -87,10 +87,14 @@ The panel stays open until you close it with the ×. If the app puts that chat t
 | Column | Shows |
 |---|---|
 | (bar) | How much time is left |
-| Name | The chat's name. In the desktop app, click it to go to that chat |
+| Name | The chat's name, as the app's sidebar shows it. In the desktop app, click it to go to that chat |
 | Size | How big the chat is, in tokens (for example `410k`) |
 | Time | Time left, the hold's end time (for example `4:30 pm`) when held, `cold`, or the Claude Code character while that chat is working |
-| Hold | Tick to hold that chat for 8 hours (45 minutes on a 5-minute cache); untick to stop |
+| Hold | Tick to hold that chat for 8 hours (45 minutes on a 5-minute cache); untick to stop. Only shown while that chat's window is awake |
+
+Chats are grouped under their project's name as the app shows it: the git repository's name, else the folder's. A chat you rename shows its new name within half a minute.
+
+The desktop app puts a chat to sleep when you haven't used it for a while. A sleeping chat can't keep itself warm, so its Hold box is hidden until you open that chat again. A chat that was stopped mid-reply stops showing as working within two minutes.
 
 A cold chat stays in the list, greyed, for 4 hours and then drops off. A chat you delete drops off at once. A chat you have closed or archived drops off as soon as it goes cold.
 
